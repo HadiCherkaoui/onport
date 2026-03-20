@@ -55,7 +55,7 @@ struct Cli {
     force: bool,
 
     /// Live-updating watch mode (refresh every 2s).
-    #[arg(short = 'w', long = "watch")]
+    #[arg(short = 'w', long = "watch", conflicts_with_all = ["kill", "json"])]
     watch: bool,
 }
 

@@ -167,8 +167,10 @@ pub fn run_watch(
         // Gone entries (shown for one cycle in red)
         // We don't have the full PortEntry for gone sockets, so we print a
         // minimal placeholder row indicating the port is no longer present.
-        for (port, addr) in &gone_keys {
-            let addr_str = format_address(addr);
+        let mut gone_sorted: Vec<_> = gone_keys.iter().copied().collect();
+        gone_sorted.sort_by_key(|(port, _)| *port);
+        for (port, addr) in gone_sorted {
+            let addr_str = super::format_address(&addr);
             let row = format!(
                 "  {:>5}  {:<4}  {:<16}  {:<16}  {:>6}  {:<10}  {}",
                 port, "—", addr_str, "—", "—", "—", "GONE"
@@ -186,17 +188,17 @@ pub fn run_watch(
         prev_keys = curr_keys;
 
         // ── 5. Poll for quit key (2-second timeout) ───────────────────────────
-        if event::poll(Duration::from_millis(2000))? {
-            if let Event::Key(key) = event::read()? {
-                match key.code {
-                    KeyCode::Char('q') | KeyCode::Char('Q') => break,
-                    KeyCode::Char('c')
-                        if key.modifiers.contains(KeyModifiers::CONTROL) =>
-                    {
-                        break
-                    }
-                    _ => {}
+        if event::poll(Duration::from_millis(2000))?
+            && let Event::Key(key) = event::read()?
+        {
+            match key.code {
+                KeyCode::Char('q') | KeyCode::Char('Q') => break,
+                KeyCode::Char('c')
+                    if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                {
+                    break
                 }
+                _ => {}
             }
         }
     }
@@ -244,13 +246,18 @@ fn print_column_header(no_color: bool) {
 /// Print a single port-entry row, applying highlight color when appropriate.
 fn print_row(entry: &crate::types::PortEntry, highlight: RowHighlight, no_color: bool) {
     let process_name = entry.process_name.as_deref().unwrap_or("?");
-    let process_display = if process_name.len() > 16 {
-        format!("{}\u{2026}", &process_name[..15])
+    let process_display = if process_name.chars().count() > 16 {
+        let truncate_at = process_name
+            .char_indices()
+            .nth(15)
+            .map(|(i, _)| i)
+            .unwrap_or(process_name.len());
+        format!("{}\u{2026}", &process_name[..truncate_at])
     } else {
         process_name.to_string()
     };
 
-    let addr_str = format_address(&entry.local_addr);
+    let addr_str = super::format_address(&entry.local_addr);
     let pid_str = entry
         .pid
         .map_or_else(|| "?".to_string(), |p| p.to_string());
@@ -286,11 +293,3 @@ fn print_row(entry: &crate::types::PortEntry, highlight: RowHighlight, no_color:
     }
 }
 
-/// Format an IP address for display, showing `*` for unspecified addresses.
-fn format_address(addr: &IpAddr) -> String {
-    match addr {
-        IpAddr::V4(v4) if v4.is_unspecified() => "*".to_string(),
-        IpAddr::V6(v6) if v6.is_unspecified() => "*".to_string(),
-        other => other.to_string(),
-    }
-}

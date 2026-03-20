@@ -5,6 +5,7 @@ pub mod table;
 pub mod watch;
 
 use anyhow::Result;
+use std::net::IpAddr;
 
 use crate::types::PortEntry;
 
@@ -25,5 +26,41 @@ pub fn render(entries: &[PortEntry], format: &OutputFormat, no_color: bool) -> R
     match format {
         OutputFormat::Table => table::render(entries, no_color),
         OutputFormat::Json => json::render(entries),
+    }
+}
+
+/// Format a local bind address for display.
+///
+/// Unspecified addresses (`0.0.0.0` and `::`) are shown as `*` (all interfaces),
+/// consistent with the `ss` convention.
+pub(crate) fn format_address(addr: &IpAddr) -> String {
+    match addr {
+        IpAddr::V4(v4) if v4.is_unspecified() => "*".to_string(),
+        IpAddr::V6(v6) if v6.is_unspecified() => "*".to_string(),
+        other => other.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::{Ipv4Addr, Ipv6Addr};
+
+    #[test]
+    fn test_format_address_ipv4_unspecified() {
+        let addr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
+        assert_eq!(format_address(&addr), "*");
+    }
+
+    #[test]
+    fn test_format_address_ipv6_unspecified() {
+        let addr = IpAddr::V6(Ipv6Addr::UNSPECIFIED);
+        assert_eq!(format_address(&addr), "*");
+    }
+
+    #[test]
+    fn test_format_address_specific() {
+        let addr = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
+        assert_eq!(format_address(&addr), "127.0.0.1");
     }
 }

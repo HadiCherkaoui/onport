@@ -2,7 +2,6 @@
 
 use anyhow::Result;
 use owo_colors::OwoColorize;
-use std::net::IpAddr;
 use tabled::settings::object::Columns;
 use tabled::settings::{Alignment, Style};
 use tabled::{Table, Tabled};
@@ -44,8 +43,13 @@ pub fn render(entries: &[PortEntry], no_color: bool) -> Result<()> {
         .map(|e| {
             let process_name = e.process_name.as_deref().unwrap_or("?");
             // Truncate process names to 16 characters for alignment
-            let process_display = if process_name.len() > 16 {
-                format!("{}…", &process_name[..15])
+            let process_display = if process_name.chars().count() > 16 {
+                let truncate_at = process_name
+                    .char_indices()
+                    .nth(15)
+                    .map(|(i, _)| i)
+                    .unwrap_or(process_name.len());
+                format!("{}…", &process_name[..truncate_at])
             } else {
                 process_name.to_string()
             };
@@ -66,7 +70,7 @@ pub fn render(entries: &[PortEntry], no_color: bool) -> Result<()> {
             TableRow {
                 port: e.port.to_string(),
                 proto: e.protocol.to_string(),
-                address: format_address(&e.local_addr),
+                address: super::format_address(&e.local_addr),
                 process: process_display,
                 pid: e.pid.map_or_else(|| "?".to_string(), |p| p.to_string()),
                 user: e.user.clone().unwrap_or_else(|| "?".to_string()),
@@ -95,38 +99,3 @@ fn colorize_state(state: &SocketState) -> String {
     }
 }
 
-/// Format an IP address for display, showing `*` for unspecified addresses.
-///
-/// Converts `0.0.0.0` (IPv4) and `::` (IPv6) to `*` to indicate listening on all interfaces,
-/// consistent with `ss` convention. All other addresses are displayed as-is.
-fn format_address(addr: &IpAddr) -> String {
-    match addr {
-        IpAddr::V4(v4) if v4.is_unspecified() => "*".to_string(),
-        IpAddr::V6(v6) if v6.is_unspecified() => "*".to_string(),
-        other => other.to_string(),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::net::{Ipv4Addr, Ipv6Addr};
-
-    #[test]
-    fn test_format_address_ipv4_unspecified() {
-        let addr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
-        assert_eq!(format_address(&addr), "*");
-    }
-
-    #[test]
-    fn test_format_address_ipv6_unspecified() {
-        let addr = IpAddr::V6(Ipv6Addr::UNSPECIFIED);
-        assert_eq!(format_address(&addr), "*");
-    }
-
-    #[test]
-    fn test_format_address_specific() {
-        let addr = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
-        assert_eq!(format_address(&addr), "127.0.0.1");
-    }
-}
