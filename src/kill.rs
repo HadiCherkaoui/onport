@@ -17,6 +17,7 @@ use crate::types::PortEntry;
 /// # Errors
 ///
 /// Returns an error describing why the kill would be unsafe.
+#[cfg_attr(not(unix), allow(dead_code))]
 pub fn is_safe_to_kill(entry: &PortEntry) -> Result<()> {
     let pid = entry
         .pid
@@ -33,10 +34,12 @@ pub fn is_safe_to_kill(entry: &PortEntry) -> Result<()> {
     #[cfg(target_os = "linux")]
     {
         let cmdline_path = format!("/proc/{pid}/cmdline");
-        let cmdline = std::fs::read(&cmdline_path)
-            .unwrap_or_default();
+        let cmdline = match std::fs::read(&cmdline_path) {
+            Ok(bytes) => bytes,
+            Err(_) => return Ok(()), // Cannot read cmdline; proceed with kill attempt
+        };
         if cmdline.is_empty() {
-            return Err(anyhow!("Refusing to kill kernel thread (PID {pid})"));
+            anyhow::bail!("Refusing to kill kernel thread (PID {pid})");
         }
     }
 
@@ -44,13 +47,13 @@ pub fn is_safe_to_kill(entry: &PortEntry) -> Result<()> {
 }
 
 /// Prompt the user for confirmation before killing a process.
-#[cfg_attr(not(unix), allow(dead_code))]
 ///
 /// Returns `true` if the user confirms, `false` otherwise.
 ///
 /// # Errors
 ///
 /// Returns an error if reading from stdin fails.
+#[cfg_attr(not(unix), allow(dead_code))]
 pub fn confirm_kill(entry: &PortEntry) -> Result<bool> {
     let pid = entry.pid.ok_or_else(|| anyhow!("No PID available for this socket"))?;
     let name = entry
@@ -83,11 +86,10 @@ pub fn confirm_kill(entry: &PortEntry) -> Result<bool> {
 pub fn kill_process(entry: &PortEntry, force: bool) -> Result<()> {
     #[cfg(unix)]
     {
-        is_safe_to_kill(entry)?;
-
         let pid = entry
             .pid
             .ok_or_else(|| anyhow!("No PID available for this socket"))?;
+        is_safe_to_kill(entry)?;
 
         if !force {
             let confirmed = confirm_kill(entry)?;
@@ -121,7 +123,7 @@ pub fn kill_process(entry: &PortEntry, force: bool) -> Result<()> {
                     return Ok(());
                 }
             }
-            println!("Process still running. Use -kf to force kill.");
+            println!("Process still running. Use -k -f to force kill.");
         }
 
         Ok(())

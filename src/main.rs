@@ -50,7 +50,7 @@ struct Cli {
     #[arg(short = 'k', long = "kill")]
     kill: bool,
 
-    /// Force kill (SIGKILL) without confirmation.
+    /// Force kill (SIGKILL) without confirmation. Only effective with --kill.
     #[arg(long = "force", short = 'f')]
     force: bool,
 }
@@ -59,6 +59,12 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     let port_filters = parse_port_filters(&cli.ports)?;
+
+    // Kill mode requires a specific port to avoid ambiguity.
+    if cli.kill && port_filters.is_empty() {
+        eprintln!("Error: --kill requires a port number (e.g., onport --kill 3000).");
+        return Ok(());
+    }
 
     let provider = platform::get_provider();
     let mut entries = provider
@@ -89,7 +95,7 @@ fn main() -> Result<()> {
     docker::enrich_with_docker(&mut entries);
 
     // Handle kill mode
-    if cli.kill || cli.force {
+    if cli.kill {
         if entries.is_empty() {
             eprintln!("No process found on the specified port(s).");
             return Ok(());
