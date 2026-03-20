@@ -2,6 +2,7 @@
 
 use anyhow::Result;
 use owo_colors::OwoColorize;
+use std::net::IpAddr;
 use tabled::settings::object::Columns;
 use tabled::settings::{Alignment, Style};
 use tabled::{Table, Tabled};
@@ -15,6 +16,8 @@ struct TableRow {
     port: String,
     #[tabled(rename = "PROTO")]
     proto: String,
+    #[tabled(rename = "ADDRESS")]
+    address: String,
     #[tabled(rename = "PROCESS")]
     process: String,
     #[tabled(rename = "PID")]
@@ -63,6 +66,7 @@ pub fn render(entries: &[PortEntry], no_color: bool) -> Result<()> {
             TableRow {
                 port: e.port.to_string(),
                 proto: e.protocol.to_string(),
+                address: format_address(&e.local_addr),
                 process: process_display,
                 pid: e.pid.map_or_else(|| "?".to_string(), |p| p.to_string()),
                 user: e.user.clone().unwrap_or_else(|| "?".to_string()),
@@ -88,5 +92,17 @@ fn colorize_state(state: &SocketState) -> String {
         SocketState::Established => text.yellow().to_string(),
         SocketState::TimeWait | SocketState::CloseWait => text.red().to_string(),
         _ => text,
+    }
+}
+
+/// Format an IP address for display, showing `*` for unspecified addresses.
+///
+/// Converts `0.0.0.0` (IPv4) and `::` (IPv6) to `*` to indicate listening on all interfaces,
+/// consistent with `ss` convention. All other addresses are displayed as-is.
+fn format_address(addr: &IpAddr) -> String {
+    match addr {
+        IpAddr::V4(v4) if v4.is_unspecified() => "*".to_string(),
+        IpAddr::V6(v6) if v6.is_unspecified() => "*".to_string(),
+        other => other.to_string(),
     }
 }
