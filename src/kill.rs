@@ -58,15 +58,16 @@ pub fn confirm_kill(entry: &PortEntry) -> Result<bool> {
         .as_deref()
         .unwrap_or("unknown");
 
+    // Show Docker hint before the prompt so user can reconsider.
+    if let Some(container) = &entry.docker_container {
+        println!("  Hint: consider `docker stop {container}` instead");
+    }
+
     print!("Kill process `{name}` (PID {pid})? [y/N] ");
     std::io::stdout().flush()?;
 
     let mut line = String::new();
     std::io::stdin().read_line(&mut line)?;
-
-    if entry.docker_container.is_some() {
-        println!("  Hint: consider `docker stop {name}` instead");
-    }
 
     Ok(line.starts_with('y') || line.starts_with('Y'))
 }
