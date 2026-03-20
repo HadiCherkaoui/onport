@@ -52,9 +52,6 @@ impl fmt::Display for Protocol {
 /// Socket connection state.
 ///
 /// Maps to standard TCP states. UDP sockets are always `Listen`.
-// Variants are constructed by Linux and Windows platform modules; suppressed
-// only on macOS where neither of those modules is compiled in.
-#[cfg_attr(target_os = "macos", allow(dead_code))]
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub enum SocketState {
     /// Socket is listening for incoming connections.

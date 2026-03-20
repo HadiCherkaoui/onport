@@ -13,8 +13,34 @@ pub struct MacOsProvider;
 
 impl PlatformProvider for MacOsProvider {
     fn list_sockets(&self) -> Result<Vec<PortEntry>> {
-        bail!("macOS support not yet implemented")
+        let output = run_lsof()?;
+        Ok(parse_lsof_output(&output))
     }
+}
+
+/// Run `lsof` and return its stdout.
+///
+/// # Errors
+///
+/// Returns an error if `lsof` is not found or exits with an
+/// unexpected error code. Exit code 1 (no matches) is not an error.
+fn run_lsof() -> Result<String> {
+    let output = std::process::Command::new("lsof")
+        .args(["-iTCP", "-iUDP", "-nP", "-F", "pcLtPTn"])
+        .output()
+        .context("Failed to run lsof. Is it installed?")?;
+
+    // lsof exits with 1 when no sockets match — that is not an error.
+    if !output.status.success() && output.status.code() != Some(1) {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!(
+            "lsof failed (exit {}): {}",
+            output.status.code().unwrap_or(-1),
+            stderr.trim()
+        );
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 /// Parse a single `host:port` component from lsof output.
