@@ -10,9 +10,9 @@ use crate::types::{PortEntry, Protocol, SocketState};
 
 use super::PlatformProvider;
 
-/// Linux socket provider using `/proc/net/tcp` parsing.
+/// Linux socket provider reading `/proc/net/{tcp,tcp6,udp,udp6}`.
 ///
-/// Reads `/proc/net/tcp` and `/proc/net/tcp6` to enumerate sockets,
+/// Reads all four `/proc/net/` socket files to enumerate sockets,
 /// then resolves PIDs by scanning `/proc/{pid}/fd/` for socket inodes.
 pub struct LinuxProvider;
 
@@ -132,7 +132,7 @@ fn parse_proc_line(line: &str, is_ipv6: bool, protocol: Protocol) -> Option<RawS
     };
     let port = parse_hex_port(local_parts[1])?;
 
-    // Field 3: state
+    // Field 3: state (for UDP, kernel reports 07 for bound sockets)
     let state = SocketState::from_hex(fields[3]);
 
     // Field 7: uid
@@ -248,7 +248,7 @@ mod tests {
     const SAMPLE_TCP_LINE: &str =
         "   0: 0100007F:1F90 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 12345 1 0000000000000000 100 0 0 10 0";
 
-    // Sample line from /proc/net/udp (0.0.0.0:53, state=07 Close, uid=101, inode=67890)
+    // Sample line from /proc/net/udp (0.0.0.0:53, state=07 = bound socket, uid=101, inode=67890)
     const SAMPLE_UDP_LINE: &str =
         "   0: 00000000:0035 00000000:0000 07 00000000:00000000 00:00000000 00000000   101        0 67890 2 0000000000000000";
 
