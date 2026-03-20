@@ -58,6 +58,27 @@ fn parse_host_port(s: &str, is_ipv6: bool) -> Option<(IpAddr, u16)> {
     Some((IpAddr::V4(addr), port))
 }
 
+/// Map an lsof TCP state string to `SocketState`.
+///
+/// macOS lsof reports standard TCP state names. Mappings are kept
+/// consistent with `SocketState::from_win_state` for cross-platform
+/// parity (e.g., both `FIN_WAIT_1` and `FIN_WAIT_2` become
+/// `Other("FIN_WAIT")`).
+fn parse_lsof_state(state: &str) -> SocketState {
+    match state {
+        "LISTEN" => SocketState::Listen,
+        "ESTABLISHED" => SocketState::Established,
+        "TIME_WAIT" => SocketState::TimeWait,
+        "CLOSE_WAIT" => SocketState::CloseWait,
+        "SYN_SENT" => SocketState::SynSent,
+        "SYN_RECEIVED" | "SYN_RECV" => SocketState::SynRecv,
+        "CLOSED" => SocketState::Close,
+        "FIN_WAIT_1" | "FIN_WAIT_2" => SocketState::Other("FIN_WAIT".to_string()),
+        "CLOSING" | "LAST_ACK" => SocketState::Other("CLOSING".to_string()),
+        other => SocketState::Other(other.to_string()),
+    }
+}
+
 /// Parse the lsof `n` (name) field into address components.
 ///
 /// `is_ipv6` comes from the `t` (file type) field and is needed to
@@ -171,5 +192,76 @@ mod tests {
     fn test_parse_name_high_port() {
         let (_, port, _) = parse_name_field("0.0.0.0:65535", false).unwrap();
         assert_eq!(port, 65535);
+    }
+
+    // ── parse_lsof_state ──────────────────────────────────────────────────────
+
+    #[test]
+    fn test_parse_lsof_state_listen() {
+        assert_eq!(parse_lsof_state("LISTEN"), SocketState::Listen);
+    }
+
+    #[test]
+    fn test_parse_lsof_state_established() {
+        assert_eq!(parse_lsof_state("ESTABLISHED"), SocketState::Established);
+    }
+
+    #[test]
+    fn test_parse_lsof_state_time_wait() {
+        assert_eq!(parse_lsof_state("TIME_WAIT"), SocketState::TimeWait);
+    }
+
+    #[test]
+    fn test_parse_lsof_state_close_wait() {
+        assert_eq!(parse_lsof_state("CLOSE_WAIT"), SocketState::CloseWait);
+    }
+
+    #[test]
+    fn test_parse_lsof_state_syn_sent() {
+        assert_eq!(parse_lsof_state("SYN_SENT"), SocketState::SynSent);
+    }
+
+    #[test]
+    fn test_parse_lsof_state_syn_recv() {
+        assert_eq!(parse_lsof_state("SYN_RECEIVED"), SocketState::SynRecv);
+    }
+
+    #[test]
+    fn test_parse_lsof_state_closed() {
+        assert_eq!(parse_lsof_state("CLOSED"), SocketState::Close);
+    }
+
+    #[test]
+    fn test_parse_lsof_state_fin_wait() {
+        // FIN_WAIT states map to Other, consistent with Windows behavior.
+        assert_eq!(
+            parse_lsof_state("FIN_WAIT_1"),
+            SocketState::Other("FIN_WAIT".to_string())
+        );
+        assert_eq!(
+            parse_lsof_state("FIN_WAIT_2"),
+            SocketState::Other("FIN_WAIT".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_lsof_state_closing_and_last_ack() {
+        // Consistent with Windows: CLOSING and LAST_ACK map to Other("CLOSING").
+        assert_eq!(
+            parse_lsof_state("CLOSING"),
+            SocketState::Other("CLOSING".to_string())
+        );
+        assert_eq!(
+            parse_lsof_state("LAST_ACK"),
+            SocketState::Other("CLOSING".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_lsof_state_unknown() {
+        assert_eq!(
+            parse_lsof_state("WEIRD"),
+            SocketState::Other("WEIRD".to_string())
+        );
     }
 }
