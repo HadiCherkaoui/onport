@@ -45,6 +45,14 @@ struct Cli {
     /// Disable colored output.
     #[arg(long)]
     no_color: bool,
+
+    /// Kill the process on the specified port.
+    #[arg(short = 'k', long = "kill")]
+    kill: bool,
+
+    /// Force kill (SIGKILL) without confirmation.
+    #[arg(long = "force", short = 'f')]
+    force: bool,
 }
 
 fn main() -> Result<()> {
@@ -79,6 +87,22 @@ fn main() -> Result<()> {
 
     // Enrich entries with Docker container names where ports match.
     docker::enrich_with_docker(&mut entries);
+
+    // Handle kill mode
+    if cli.kill || cli.force {
+        if entries.is_empty() {
+            eprintln!("No process found on the specified port(s).");
+            return Ok(());
+        }
+        if entries.len() > 1 {
+            // Show the table so user knows what matched, then error
+            output::render(&entries, &OutputFormat::Table, cli.no_color)?;
+            eprintln!("Multiple processes found. Specify a single port.");
+            return Ok(());
+        }
+        kill::kill_process(&entries[0], cli.force)?;
+        return Ok(());
+    }
 
     let format = if cli.json {
         OutputFormat::Json
