@@ -115,10 +115,11 @@ pub fn run_watch(
             docker::enrich_with_docker(&mut entries);
         }
 
-        // Collapse same-service entries (e.g., docker-proxy IPv4/IPv6) for display.
-        crate::dedup_same_service(&mut entries);
-
         // ── 2. Diff against previous snapshot ────────────────────────────────
+        // Use the original (non-deduplicated) entries so that each individual
+        // socket (e.g., IPv4 and IPv6 docker-proxy listeners) is tracked
+        // independently. This ensures a GONE event fires if either peer
+        // disappears, even when they share the same port.
         let curr_keys: HashSet<(u16, IpAddr)> =
             entries.iter().map(|e| (e.port, e.local_addr)).collect();
 
@@ -127,6 +128,11 @@ pub fn run_watch(
 
         let gone_keys: HashSet<(u16, IpAddr)> =
             prev_keys.difference(&curr_keys).copied().collect();
+
+        // Build a deduplicated copy for display only.
+        // The original `entries` is kept intact for accurate diff tracking.
+        let mut display_entries = entries.clone();
+        crate::dedup_same_service(&mut display_entries);
 
         // ── 3. Redraw ─────────────────────────────────────────────────────────
         let now = {
@@ -163,7 +169,7 @@ pub fn run_watch(
         print_column_header(no_color);
 
         // Current entries
-        for entry in &entries {
+        for entry in &display_entries {
             let key = (entry.port, entry.local_addr);
             let highlight = if new_keys.contains(&key) {
                 RowHighlight::New
