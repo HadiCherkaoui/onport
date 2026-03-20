@@ -53,6 +53,10 @@ struct Cli {
     /// Force kill (SIGKILL) without confirmation. Only effective with --kill.
     #[arg(long = "force", short = 'f')]
     force: bool,
+
+    /// Live-updating watch mode (refresh every 2s).
+    #[arg(short = 'w', long = "watch")]
+    watch: bool,
 }
 
 fn main() -> Result<()> {
@@ -67,6 +71,25 @@ fn main() -> Result<()> {
     }
 
     let provider = platform::get_provider();
+
+    // Watch mode — enter the live-update loop and return when the user quits.
+    if cli.watch {
+        let protocol_filter = if cli.tcp && !cli.udp {
+            Some(types::Protocol::Tcp)
+        } else if cli.udp && !cli.tcp {
+            Some(types::Protocol::Udp)
+        } else {
+            None
+        };
+        return output::watch::run_watch(
+            provider.as_ref(),
+            &port_filters,
+            protocol_filter,
+            cli.all,
+            cli.no_color,
+        );
+    }
+
     let mut entries = provider
         .list_sockets()
         .context("Failed to enumerate sockets")?;
