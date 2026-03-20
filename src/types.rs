@@ -32,7 +32,7 @@ pub struct PortEntry {
 }
 
 /// Transport protocol type.
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, Hash)]
 pub enum Protocol {
     /// Transmission Control Protocol.
     Tcp,
@@ -55,7 +55,7 @@ impl fmt::Display for Protocol {
 // Variants are constructed by Linux and Windows platform modules; suppressed
 // only on macOS where neither of those modules is compiled in.
 #[cfg_attr(target_os = "macos", allow(dead_code))]
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, Hash)]
 pub enum SocketState {
     /// Socket is listening for incoming connections.
     Listen,

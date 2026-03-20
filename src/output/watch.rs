@@ -105,6 +105,9 @@ pub fn run_watch(
             entries.retain(|e| e.state == SocketState::Listen);
         }
 
+        // Deduplicate wildcard IPv4/IPv6 entries that represent the same socket
+        crate::dedup_entries(&mut entries);
+
         entries.sort_by_key(|e| e.port);
 
         docker::enrich_with_docker(&mut entries);

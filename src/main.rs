@@ -111,6 +111,9 @@ fn main() -> Result<()> {
         entries.retain(|e| e.state == types::SocketState::Listen);
     }
 
+    // Deduplicate wildcard IPv4/IPv6 entries that represent the same socket
+    dedup_entries(&mut entries);
+
     // Sort by port number
     entries.sort_by_key(|e| e.port);
 
@@ -144,6 +147,30 @@ fn main() -> Result<()> {
     Ok(())
 }
 
+/// Remove duplicate socket entries that represent the same logical socket.
+///
+/// Windows returns separate IPv4 (`0.0.0.0`) and IPv6 (`::`) entries for
+/// dual-stack or wildcard-bound sockets. Both map to `"*"` in the ADDRESS
+/// column. This function retains only the first occurrence per logical socket,
+/// treating all unspecified addresses as equivalent.
+///
+/// Dedup key: `(port, protocol, pid, state, normalized_local_addr, remote_addr)`
+/// where `normalized_local_addr` is `None` for any unspecified address.
+pub(crate) fn dedup_entries(entries: &mut Vec<types::PortEntry>) {
+    use std::collections::HashSet;
+    use std::net::IpAddr;
+
+    let mut seen = HashSet::new();
+    entries.retain(|e| {
+        let norm_addr: Option<IpAddr> = if e.local_addr.is_unspecified() {
+            None
+        } else {
+            Some(e.local_addr)
+        };
+        seen.insert((e.port, e.protocol.clone(), e.pid, e.state.clone(), norm_addr, e.remote_addr))
+    });
+}
+
 /// Parse port filter arguments, stripping optional `:` prefix.
 ///
 /// # Errors
@@ -163,6 +190,40 @@ fn parse_port_filters(args: &[String]) -> Result<Vec<u16>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_dedup_entries_removes_wildcard_duplicates() {
+        use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+        use crate::types::{PortEntry, Protocol, SocketState};
+
+        fn make_entry(port: u16, addr: IpAddr) -> PortEntry {
+            PortEntry {
+                port,
+                protocol: Protocol::Tcp,
+                state: SocketState::Listen,
+                pid: Some(1234),
+                process_name: None,
+                user: None,
+                local_addr: addr,
+                remote_addr: None,
+                docker_container: None,
+            }
+        }
+
+        let mut entries = vec![
+            make_entry(80, IpAddr::V4(Ipv4Addr::UNSPECIFIED)), // 0.0.0.0
+            make_entry(80, IpAddr::V6(Ipv6Addr::UNSPECIFIED)), // :: (duplicate)
+            make_entry(80, IpAddr::V4(Ipv4Addr::LOCALHOST)),   // 127.0.0.1 (distinct)
+            make_entry(443, IpAddr::V4(Ipv4Addr::UNSPECIFIED)), // different port, kept
+        ];
+
+        dedup_entries(&mut entries);
+
+        // Expect: 80/IPv4-wildcard, 80/localhost, 443/wildcard (IPv6 wildcard dropped)
+        assert_eq!(entries.len(), 3, "expected 3 entries after dedup");
+        assert_eq!(entries[0].local_addr, IpAddr::V4(Ipv4Addr::UNSPECIFIED));
+        assert_eq!(entries[1].local_addr, IpAddr::V4(Ipv4Addr::LOCALHOST));
+    }
 
     #[test]
     fn test_parse_port_filters_bare_numbers() {
