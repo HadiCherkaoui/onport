@@ -5,6 +5,20 @@ use std::net::{IpAddr, SocketAddr};
 
 use serde::Serialize;
 
+/// Extended process details resolved on demand for the single-port detail view.
+///
+/// Only populated when the user queries a single port and exactly one process
+/// matches. Fields are best-effort; missing information becomes `None`.
+#[derive(Debug, Clone, Serialize)]
+pub struct ProcessDetails {
+    /// Full command line with arguments.
+    pub cmdline: Option<String>,
+    /// Process start time as a human-readable relative string (e.g. `"2h 15m ago"`).
+    pub start_time: Option<String>,
+    /// Number of open file descriptors or handles.
+    pub fd_count: Option<usize>,
+}
+
 /// Represents a single network socket entry.
 ///
 /// Contains all information about a listening or connected socket,

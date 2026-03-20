@@ -4,7 +4,10 @@ mod docker;
 mod kill;
 mod output;
 mod platform;
+mod process_detail;
 mod types;
+
+use std::io::{IsTerminal, Write as _};
 
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -45,6 +48,10 @@ struct Cli {
     /// Disable colored output.
     #[arg(long)]
     no_color: bool,
+
+    /// Disable Docker container name detection.
+    #[arg(long)]
+    no_docker: bool,
 
     /// Kill the process on the specified port.
     #[arg(short = 'k', long = "kill")]
@@ -87,6 +94,7 @@ fn main() -> Result<()> {
             protocol_filter,
             cli.all,
             cli.no_color,
+            cli.no_docker,
         );
     }
 
@@ -118,7 +126,9 @@ fn main() -> Result<()> {
     entries.sort_by_key(|e| e.port);
 
     // Enrich entries with Docker container names where ports match.
-    docker::enrich_with_docker(&mut entries);
+    if !cli.no_docker {
+        docker::enrich_with_docker(&mut entries);
+    }
 
     // Handle kill mode
     if cli.kill {
@@ -126,13 +136,15 @@ fn main() -> Result<()> {
             eprintln!("No process found on the specified port(s).");
             return Ok(());
         }
-        if entries.len() > 1 {
-            // Show the table so user knows what matched, then error
+        // Allow killing when all entries share the same process name (e.g. docker-proxy
+        // spawning separate IPv4/IPv6 listeners). Reject only when genuinely different
+        // processes would be affected.
+        if !is_single_process(&entries) {
             output::render(&entries, &OutputFormat::Table, cli.no_color)?;
-            eprintln!("Multiple processes found. Specify a single port.");
+            eprintln!("Multiple different processes found. Specify a single port.");
             return Ok(());
         }
-        kill::kill_process(&entries[0], cli.force)?;
+        kill::kill_processes(&entries, cli.force)?;
         return Ok(());
     }
 
@@ -144,7 +156,49 @@ fn main() -> Result<()> {
 
     output::render(&entries, &format, cli.no_color)?;
 
+    // Enhanced single-port view: show process details and offer an inline kill prompt
+    // when exactly one port is queried, a single process matched, and we are in a TTY.
+    let is_single_port_view = port_filters.len() == 1
+        && !cli.json
+        && std::io::stdout().is_terminal();
+
+    if is_single_port_view {
+        let unique_pids: Vec<u32> = entries
+            .iter()
+            .filter_map(|e| e.pid)
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+
+        if unique_pids.len() == 1 {
+            let details = process_detail::resolve(unique_pids[0]);
+            output::render_details(&details, cli.no_color);
+
+            println!();
+            print!("  Kill this process? [y/N] ");
+            std::io::stdout().flush()?;
+            let mut line = String::new();
+            std::io::stdin().read_line(&mut line)?;
+            if line.starts_with('y') || line.starts_with('Y') {
+                kill::kill_processes(&entries, false)?;
+            }
+        }
+    }
+
     Ok(())
+}
+
+/// Return `true` when all entries share the same process name (one logical service).
+///
+/// Two processes cannot bind the same port, so entries filtered to the same
+/// port(s) with the same name always represent a single logical service (e.g.
+/// docker-proxy with separate IPv4/IPv6 listeners).
+pub(crate) fn is_single_process(entries: &[types::PortEntry]) -> bool {
+    let unique_names: std::collections::HashSet<_> = entries
+        .iter()
+        .map(|e| e.process_name.as_deref().unwrap_or("?"))
+        .collect();
+    unique_names.len() <= 1
 }
 
 /// Remove duplicate socket entries that represent the same logical socket.
@@ -257,5 +311,59 @@ mod tests {
     fn test_parse_port_filters_invalid() {
         let args = vec!["not_a_port".to_string()];
         assert!(parse_port_filters(&args).is_err());
+    }
+
+    #[test]
+    fn test_is_single_process_same_name() {
+        use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+        use crate::types::{PortEntry, Protocol, SocketState};
+
+        fn make_entry(addr: IpAddr, name: &str) -> PortEntry {
+            PortEntry {
+                port: 8888,
+                protocol: Protocol::Tcp,
+                state: SocketState::Listen,
+                pid: Some(100),
+                process_name: Some(name.to_string()),
+                user: None,
+                local_addr: addr,
+                remote_addr: None,
+                docker_container: None,
+            }
+        }
+
+        // Both entries share the same process name → single logical service
+        let entries = vec![
+            make_entry(IpAddr::V4(Ipv4Addr::UNSPECIFIED), "docker-proxy"),
+            make_entry(IpAddr::V6(Ipv6Addr::UNSPECIFIED), "docker-proxy"),
+        ];
+        assert!(is_single_process(&entries));
+    }
+
+    #[test]
+    fn test_is_single_process_different_names() {
+        use std::net::{IpAddr, Ipv4Addr};
+        use crate::types::{PortEntry, Protocol, SocketState};
+
+        fn make_entry(port: u16, name: &str) -> PortEntry {
+            PortEntry {
+                port,
+                protocol: Protocol::Tcp,
+                state: SocketState::Listen,
+                pid: Some(100),
+                process_name: Some(name.to_string()),
+                user: None,
+                local_addr: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                remote_addr: None,
+                docker_container: None,
+            }
+        }
+
+        // Different process names → multiple distinct processes
+        let entries = vec![
+            make_entry(80, "nginx"),
+            make_entry(80, "apache2"),
+        ];
+        assert!(!is_single_process(&entries));
     }
 }

@@ -81,6 +81,7 @@ pub fn run_watch(
     protocol_filter: Option<Protocol>,
     show_all_states: bool,
     no_color: bool,
+    no_docker: bool,
 ) -> Result<()> {
     let _guard = TerminalGuard::enter()?;
 
@@ -110,7 +111,9 @@ pub fn run_watch(
 
         entries.sort_by_key(|e| e.port);
 
-        docker::enrich_with_docker(&mut entries);
+        if !no_docker {
+            docker::enrich_with_docker(&mut entries);
+        }
 
         // ── 2. Diff against previous snapshot ────────────────────────────────
         let curr_keys: HashSet<(u16, IpAddr)> =

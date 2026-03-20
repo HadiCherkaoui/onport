@@ -52,3 +52,37 @@ fn tcp_and_udp_flags_together_exits_zero() {
         .expect("failed to run onport");
     assert!(output.status.success());
 }
+
+#[test]
+fn no_docker_flag_accepted() {
+    let output = onport().arg("--no-docker").output().expect("failed to run onport");
+    assert!(output.status.success());
+}
+
+#[test]
+fn no_docker_flag_with_json_produces_valid_json() {
+    let output = onport()
+        .args(["--no-docker", "--json"])
+        .output()
+        .expect("failed to run onport");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value =
+        serde_json::from_str(&stdout).expect("--no-docker --json output should be valid JSON");
+    assert!(parsed.is_array(), "JSON output should be an array");
+}
+
+#[test]
+fn json_nonexistent_port_produces_empty_array() {
+    // Port 1 is unlikely to be bound; --json should return an empty array without
+    // triggering the interactive detail view or kill prompt.
+    let output = onport()
+        .args(["--json", "1"])
+        .output()
+        .expect("failed to run onport");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value =
+        serde_json::from_str(&stdout).expect("output should be valid JSON");
+    assert!(parsed.is_array());
+}

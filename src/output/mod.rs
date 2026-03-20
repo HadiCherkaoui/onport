@@ -29,6 +29,22 @@ pub fn render(entries: &[PortEntry], format: &OutputFormat, no_color: bool) -> R
     }
 }
 
+/// Render extended process details below the main table.
+///
+/// Displays command line, start time, and open FD count in key-value format.
+/// Fields that are `None` are omitted entirely.
+pub fn render_details(details: &crate::types::ProcessDetails, _no_color: bool) {
+    if let Some(cmdline) = &details.cmdline {
+        println!("  Command:    {cmdline}");
+    }
+    if let Some(start_time) = &details.start_time {
+        println!("  Started:    {start_time}");
+    }
+    if let Some(fd_count) = details.fd_count {
+        println!("  Open FDs:   {fd_count}");
+    }
+}
+
 /// Format a local bind address for display.
 ///
 /// Unspecified addresses (`0.0.0.0` and `::`) are shown as `*` (all interfaces),
