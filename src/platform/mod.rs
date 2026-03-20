@@ -1,5 +1,10 @@
 // Rust guideline compliant 2026-02-16
 
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+compile_error!(
+    "onport does not support this platform. Supported: linux, macos, windows."
+);
+
 use anyhow::Result;
 
 use crate::types::PortEntry;
