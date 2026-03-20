@@ -106,3 +106,27 @@ fn format_address(addr: &IpAddr) -> String {
         other => other.to_string(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::{Ipv4Addr, Ipv6Addr};
+
+    #[test]
+    fn test_format_address_ipv4_unspecified() {
+        let addr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
+        assert_eq!(format_address(&addr), "*");
+    }
+
+    #[test]
+    fn test_format_address_ipv6_unspecified() {
+        let addr = IpAddr::V6(Ipv6Addr::UNSPECIFIED);
+        assert_eq!(format_address(&addr), "*");
+    }
+
+    #[test]
+    fn test_format_address_specific() {
+        let addr = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
+        assert_eq!(format_address(&addr), "127.0.0.1");
+    }
+}
