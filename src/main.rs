@@ -77,6 +77,9 @@ fn main() -> Result<()> {
     // Sort by port number
     entries.sort_by_key(|e| e.port);
 
+    // Enrich entries with Docker container names where ports match.
+    docker::enrich_with_docker(&mut entries);
+
     let format = if cli.json {
         OutputFormat::Json
     } else {
