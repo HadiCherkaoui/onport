@@ -62,4 +62,4 @@ onport --no-color
 
 ## License
 
-GPL-3.0-or-later — Copyright (C) 2024 Hadi Cherkaoui
+GPL-3.0-or-later — Copyright (C) 2026 Hadi Cherkaoui
