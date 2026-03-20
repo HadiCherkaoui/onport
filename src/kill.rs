@@ -46,37 +46,17 @@ pub fn is_safe_to_kill(entry: &PortEntry) -> Result<()> {
     Ok(())
 }
 
-/// Kill all processes represented by the given entries.
+/// Kill all processes represented by the given entries, prompting for confirmation.
 ///
-/// Entries are expected to belong to the same logical service (same process name).
-/// Unique PIDs are extracted, safety-checked, and killed in sequence.
-/// When `force` is false, a single confirmation prompt is shown listing all PIDs.
+/// When `force` is false, a confirmation prompt is shown before sending SIGTERM.
+/// When `force` is true, SIGKILL is sent immediately without prompting.
 ///
 /// # Errors
 ///
 /// Returns an error if safety checks fail, the user cannot be prompted, or any
 /// kill signal fails.
 pub fn kill_processes(entries: &[PortEntry], force: bool) -> Result<()> {
-    // Collect unique PIDs; one representative PortEntry per PID for safety checks.
-    let mut pid_map: HashMap<u32, &PortEntry> = HashMap::new();
-    for entry in entries {
-        if let Some(pid) = entry.pid {
-            pid_map.entry(pid).or_insert(entry);
-        }
-    }
-
-    if pid_map.is_empty() {
-        return Err(anyhow!("No PID available for this socket"));
-    }
-
-    // Safety-check every unique PID before touching anything.
-    for entry in pid_map.values() {
-        is_safe_to_kill(entry)?;
-    }
-
-    let mut pids: Vec<u32> = pid_map.keys().copied().collect();
-    // Deterministic order for prompts and per-PID polling.
-    pids.sort_unstable();
+    let (pids, pid_map) = collect_pids(entries)?;
 
     if !force {
         // Docker hint once if any entry is containerized.
@@ -106,15 +86,68 @@ pub fn kill_processes(entries: &[PortEntry], force: bool) -> Result<()> {
         }
     }
 
-    // Send kill signal to each unique PID.
-    for &pid in &pids {
-        send_signal_to_pid(pid, force)?;
+    // Safety-check and kill. When force=true the safety check has already run
+    // via collect_pids; we just need to send the signal.
+    let _ = &pid_map; // keep alive for safety checks already done inside collect_pids
+    dispatch_signals(&pids, force)?;
+    poll_for_exit(&pids, force);
+    Ok(())
+}
+
+/// Kill all processes represented by `entries` without asking for confirmation.
+///
+/// Safety checks are still performed. Sends SIGTERM (graceful) to each unique
+/// PID. Use this when the caller has already obtained confirmation from the user.
+///
+/// # Errors
+///
+/// Returns an error if safety checks fail or any kill signal fails.
+pub fn kill_confirmed(entries: &[PortEntry]) -> Result<()> {
+    let (pids, _pid_map) = collect_pids(entries)?;
+    dispatch_signals(&pids, false)?;
+    poll_for_exit(&pids, false);
+    Ok(())
+}
+
+// ── Internals ─────────────────────────────────────────────────────────────
+
+/// Validate entries, safety-check every unique PID, and return sorted PIDs.
+fn collect_pids(entries: &[PortEntry]) -> Result<(Vec<u32>, HashMap<u32, ()>)> {
+    let mut pid_set: HashMap<u32, &PortEntry> = HashMap::new();
+    for entry in entries {
+        if let Some(pid) = entry.pid {
+            pid_set.entry(pid).or_insert(entry);
+        }
     }
 
-    // After SIGTERM on Linux, poll for exit up to 3 s per PID.
+    if pid_set.is_empty() {
+        return Err(anyhow!("No PID available for this socket"));
+    }
+
+    // Safety-check every unique PID before touching anything.
+    for entry in pid_set.values() {
+        is_safe_to_kill(entry)?;
+    }
+
+    let mut pids: Vec<u32> = pid_set.keys().copied().collect();
+    pids.sort_unstable();
+
+    Ok((pids, pid_set.keys().map(|&k| (k, ())).collect()))
+}
+
+/// Send kill signals to each PID in `pids`.
+fn dispatch_signals(pids: &[u32], force: bool) -> Result<()> {
+    for &pid in pids {
+        send_signal_to_pid(pid, force)?;
+    }
+    Ok(())
+}
+
+/// After SIGTERM, poll each PID for exit up to 3 seconds on Linux.
+fn poll_for_exit(pids: &[u32], force: bool) {
     #[cfg(target_os = "linux")]
     if !force {
-        for &pid in &pids {
+        for &pid in pids {
             let proc_path = format!("/proc/{pid}");
             for _ in 0..30 {
                 std::thread::sleep(std::time::Duration::from_millis(100));
@@ -127,14 +160,11 @@ pub fn kill_processes(entries: &[PortEntry], force: bool) -> Result<()> {
             }
         }
     }
-
-    Ok(())
+    // Suppress unused variable warning on non-Linux.
+    let _ = (pids, force);
 }
 
 /// Send the platform-specific kill signal to `pid`.
-///
-/// This is the low-level primitive; [`kill_processes`] handles safety checks
-/// and user confirmation before calling this function.
 #[cfg(unix)]
 fn send_signal_to_pid(pid: u32, force: bool) -> Result<()> {
     let signal = if force { "-KILL" } else { "-TERM" };
@@ -242,7 +272,6 @@ mod tests {
     #[cfg(target_os = "windows")]
     #[test]
     fn test_safe_to_kill_normal_pid_accepted() {
-        // A large PID that is unlikely to be the current process or PID 1.
         let entry = fake_entry(Some(99999));
         assert!(is_safe_to_kill(&entry).is_ok());
     }
@@ -255,35 +284,43 @@ mod tests {
     }
 
     #[test]
-    fn test_kill_processes_deduplicates_pids() {
-        // Two entries sharing the same PID should produce only one unique PID.
+    fn test_kill_confirmed_no_pid_returns_err() {
+        let entries = vec![fake_entry(None)];
+        assert!(kill_confirmed(&entries).is_err());
+    }
+
+    #[test]
+    fn test_collect_pids_deduplicates() {
         let mut e1 = fake_entry(Some(9999));
         let mut e2 = fake_entry(Some(9999));
         e1.local_addr = IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0));
         e2.local_addr = IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED);
 
         let entries = [e1, e2];
-        let mut pid_map: HashMap<u32, &PortEntry> = HashMap::new();
+        // Both entries have same PID; collect_pids should own-pid-check them.
+        // We can't call collect_pids with our own PID 9999 (not running), but we
+        // can verify the dedup logic at the HashMap level here.
+        let mut pid_set: HashMap<u32, &PortEntry> = HashMap::new();
         for entry in &entries {
             if let Some(pid) = entry.pid {
-                pid_map.entry(pid).or_insert(entry);
+                pid_set.entry(pid).or_insert(entry);
             }
         }
-        assert_eq!(pid_map.len(), 1, "duplicate PID should be deduplicated");
+        assert_eq!(pid_set.len(), 1, "duplicate PID should be deduplicated");
     }
 
     #[test]
-    fn test_kill_processes_two_distinct_pids_extracted() {
+    fn test_collect_pids_two_distinct() {
         let e1 = fake_entry(Some(1001));
         let e2 = fake_entry_named(Some(1002), Some("test-process".to_string()));
 
         let entries = [e1, e2];
-        let mut pid_map: HashMap<u32, &PortEntry> = HashMap::new();
+        let mut pid_set: HashMap<u32, &PortEntry> = HashMap::new();
         for entry in &entries {
             if let Some(pid) = entry.pid {
-                pid_map.entry(pid).or_insert(entry);
+                pid_set.entry(pid).or_insert(entry);
             }
         }
-        assert_eq!(pid_map.len(), 2, "two distinct PIDs should both be present");
+        assert_eq!(pid_set.len(), 2, "two distinct PIDs should both be present");
     }
 }

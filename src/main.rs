@@ -180,7 +180,9 @@ fn main() -> Result<()> {
             let mut line = String::new();
             std::io::stdin().read_line(&mut line)?;
             if line.starts_with('y') || line.starts_with('Y') {
-                kill::kill_processes(&entries, false)?;
+                // User already confirmed via the inline prompt; skip the second
+                // confirmation that kill_processes would show.
+                kill::kill_confirmed(&entries)?;
             }
         }
     }
