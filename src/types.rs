@@ -52,6 +52,9 @@ impl fmt::Display for Protocol {
 /// Socket connection state.
 ///
 /// Maps to standard TCP states. UDP sockets are always `Listen`.
+// Variants are constructed by the Linux platform module; allow dead_code on
+// other platforms where that module is not compiled in.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub enum SocketState {
     /// Socket is listening for incoming connections.
@@ -87,6 +90,9 @@ impl fmt::Display for SocketState {
     }
 }
 
+// from_hex is called by the Linux platform module; allow dead_code on other
+// platforms where that module is not compiled in.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 impl SocketState {
     /// Parse a hex state code from `/proc/net/tcp`.
     ///
