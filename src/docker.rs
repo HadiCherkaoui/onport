@@ -76,10 +76,15 @@ async fn enrich_async(entries: &mut [PortEntry]) {
             .map(|n| n.trim_start_matches('/').to_string())
             .unwrap_or_default();
 
+        if name.is_empty() {
+            continue;
+        }
+
         if let Some(ports) = container.ports {
             for port in ports {
                 if let Some(pub_port) = port.public_port {
-                    port_to_container.insert(pub_port, name.clone());
+                    // First container found wins on port collision; later entries are ignored.
+                    port_to_container.entry(pub_port).or_insert(name.clone());
                 }
             }
         }
