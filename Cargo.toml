@@ -1,0 +1,39 @@
+[package]
+name = "onport"
+version = "0.1.0"
+edition = "2024"
+description = "See what's listening on your ports"
+license = "MIT"
+repository = "https://github.com/hadihallak/onport"
+keywords = ["port", "network", "process", "lsof", "cli"]
+categories = ["command-line-utilities", "network-programming"]
+
+[dependencies]
+anyhow = "1.0.102"
+bollard = { version = "0.20.2", optional = true }
+clap = { version = "4.6.0", features = ["derive"] }
+crossterm = "0.29.0"
+mimalloc = "0.1.48"
+owo-colors = "4.3.0"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+sysinfo = "0.38.4"
+tabled = "0.20.0"
+tokio = { version = "1.50.0", features = ["rt", "net"], optional = true }
+
+[features]
+default = ["docker"]
+docker = ["dep:tokio", "dep:bollard"]
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_Foundation",
+    "Win32_System_Threading",
+    "Win32_Security",
+] }
+
+[profile.release]
+lto = true
+strip = true
+codegen-units = 1
