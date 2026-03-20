@@ -380,10 +380,10 @@ fn resolve_process_info(entries: &mut [PortEntry]) {
 
         entry.process_name = Some(process.name().to_string_lossy().into_owned());
 
-        if let Some(uid) = process.user_id() {
-            if let Some(user) = users.get_user_by_id(uid) {
-                entry.user = Some(user.name().to_string());
-            }
+        if let Some(uid) = process.user_id()
+            && let Some(user) = users.get_user_by_id(uid)
+        {
+            entry.user = Some(user.name().to_string());
         }
     }
 }
