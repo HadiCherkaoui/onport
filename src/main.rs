@@ -26,7 +26,7 @@ static GLOBAL: MiMalloc = MiMalloc;
 #[derive(Parser)]
 #[command(name = "onport", version, about)]
 struct Cli {
-    /// Port numbers to filter (e.g., 3000 8080 or :3000 :8080).
+    /// Port numbers or ranges to filter (e.g., 3000 8080 3000-3002 :3000).
     ports: Vec<String>,
 
     /// Show only TCP sockets.
@@ -227,20 +227,39 @@ pub(crate) fn dedup_entries(entries: &mut Vec<types::PortEntry>) {
     });
 }
 
-/// Parse port filter arguments, stripping optional `:` prefix.
+/// Parse port filter arguments, supporting single ports and `N-M` ranges.
+///
+/// Each argument may optionally be prefixed with `:` (e.g. `:3000` or `:3000-3002`).
+/// A `-` separator expands the argument into the inclusive range `start..=end`.
+/// Mixed arguments work: `["80", "3000-3002"]` produces `[80, 3000, 3001, 3002]`.
 ///
 /// # Errors
 ///
-/// Returns an error if a port argument is not a valid u16 number.
+/// Returns an error if any port value is not a valid `u16`, or if the start of a
+/// range is greater than its end (reversed range).
 fn parse_port_filters(args: &[String]) -> Result<Vec<u16>> {
-    args.iter()
-        .map(|arg| {
-            let cleaned = arg.strip_prefix(':').unwrap_or(arg);
-            cleaned
+    let mut ports = Vec::new();
+    for arg in args {
+        let cleaned = arg.strip_prefix(':').unwrap_or(arg);
+        if let Some((start_str, end_str)) = cleaned.split_once('-') {
+            let start = start_str
                 .parse::<u16>()
-                .with_context(|| format!("Invalid port number: {arg}"))
-        })
-        .collect()
+                .with_context(|| format!("Invalid port number in range: {arg}"))?;
+            let end = end_str
+                .parse::<u16>()
+                .with_context(|| format!("Invalid port number in range: {arg}"))?;
+            if start > end {
+                anyhow::bail!("Invalid port range (start > end): {arg}");
+            }
+            ports.extend(start..=end);
+        } else {
+            let port = cleaned
+                .parse::<u16>()
+                .with_context(|| format!("Invalid port number: {arg}"))?;
+            ports.push(port);
+        }
+    }
+    Ok(ports)
 }
 
 #[cfg(test)]
@@ -313,6 +332,40 @@ mod tests {
     fn test_parse_port_filters_invalid() {
         let args = vec!["not_a_port".to_string()];
         assert!(parse_port_filters(&args).is_err());
+    }
+
+    #[test]
+    fn test_parse_port_filters_range() {
+        let args = vec!["3000-3002".to_string()];
+        let result = parse_port_filters(&args).unwrap();
+        assert_eq!(result, vec![3000, 3001, 3002]);
+    }
+
+    #[test]
+    fn test_parse_port_filters_range_with_colon() {
+        let args = vec![":8080-8082".to_string()];
+        let result = parse_port_filters(&args).unwrap();
+        assert_eq!(result, vec![8080, 8081, 8082]);
+    }
+
+    #[test]
+    fn test_parse_port_filters_single_port_range() {
+        let args = vec!["9000-9000".to_string()];
+        let result = parse_port_filters(&args).unwrap();
+        assert_eq!(result, vec![9000]);
+    }
+
+    #[test]
+    fn test_parse_port_filters_reversed_range_errors() {
+        let args = vec!["9000-8000".to_string()];
+        assert!(parse_port_filters(&args).is_err());
+    }
+
+    #[test]
+    fn test_parse_port_filters_mixed_range_and_single() {
+        let args = vec!["80".to_string(), "3000-3002".to_string()];
+        let result = parse_port_filters(&args).unwrap();
+        assert_eq!(result, vec![80, 3000, 3001, 3002]);
     }
 
     #[test]

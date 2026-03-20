@@ -86,3 +86,30 @@ fn json_nonexistent_port_produces_empty_array() {
         serde_json::from_str(&stdout).expect("output should be valid JSON");
     assert!(parsed.is_array());
 }
+
+#[test]
+fn port_range_9990_9999_exits_zero() {
+    // Querying a range on empty ports should succeed (return empty JSON array).
+    let output = onport()
+        .args(["--json", "9990-9999"])
+        .output()
+        .expect("failed to run onport");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value =
+        serde_json::from_str(&stdout).expect("--json output should be valid JSON");
+    assert!(parsed.is_array());
+}
+
+#[test]
+fn mixed_range_and_single_port_exits_zero() {
+    let output = onport()
+        .args(["--json", "80", "9990-9999"])
+        .output()
+        .expect("failed to run onport");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value =
+        serde_json::from_str(&stdout).expect("--json output should be valid JSON");
+    assert!(parsed.is_array());
+}
