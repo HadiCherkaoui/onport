@@ -79,6 +79,135 @@ fn parse_lsof_state(state: &str) -> SocketState {
     }
 }
 
+/// Intermediate context for the current process being parsed.
+struct ProcessContext {
+    pid: u32,
+    command: Option<String>,
+    user: Option<String>,
+}
+
+/// Intermediate context for the current file descriptor being parsed.
+struct FdContext {
+    protocol: Option<Protocol>,
+    state: Option<SocketState>,
+    is_ipv6: bool,
+}
+
+/// Parse the full output of `lsof -iTCP -iUDP -nP -F pcLtPTn`.
+///
+/// Walks each line using a two-level state machine (process context +
+/// FD context). Emits a `PortEntry` on every `n` (name) line that
+/// has both a valid protocol and parseable address. Malformed lines
+/// are silently skipped per the graceful-degradation project principle.
+fn parse_lsof_output(output: &str) -> Vec<PortEntry> {
+    let mut entries = Vec::new();
+    let mut process: Option<ProcessContext> = None;
+    let mut fd = FdContext {
+        protocol: None,
+        state: None,
+        is_ipv6: false,
+    };
+
+    for line in output.lines() {
+        if line.is_empty() {
+            continue;
+        }
+
+        let (field_id, value) = line.split_at(1);
+        let field = match field_id.as_bytes().first() {
+            Some(&b) => b,
+            None => continue,
+        };
+
+        match field {
+            b'p' => {
+                let Ok(pid) = value.parse::<u32>() else {
+                    continue;
+                };
+                process = Some(ProcessContext {
+                    pid,
+                    command: None,
+                    user: None,
+                });
+                fd = FdContext {
+                    protocol: None,
+                    state: None,
+                    is_ipv6: false,
+                };
+            }
+            b'c' => {
+                if let Some(ref mut proc) = process {
+                    proc.command = Some(value.to_string());
+                }
+            }
+            b'L' => {
+                if let Some(ref mut proc) = process {
+                    proc.user = Some(value.to_string());
+                }
+            }
+            b'f' => {
+                fd = FdContext {
+                    protocol: None,
+                    state: None,
+                    is_ipv6: false,
+                };
+            }
+            b't' => {
+                fd.is_ipv6 = value == "IPv6";
+            }
+            b'P' => {
+                fd.protocol = match value {
+                    "TCP" => Some(Protocol::Tcp),
+                    "UDP" => Some(Protocol::Udp),
+                    _ => None,
+                };
+            }
+            b'T' => {
+                if let Some(state_str) = value.strip_prefix("ST=") {
+                    fd.state = Some(parse_lsof_state(state_str));
+                }
+            }
+            b'n' => {
+                let Some(ref proc) = process else {
+                    continue;
+                };
+                let Some(ref protocol) = fd.protocol else {
+                    continue;
+                };
+                let Some((local_addr, port, remote_addr)) =
+                    parse_name_field(value, fd.is_ipv6)
+                else {
+                    continue;
+                };
+
+                // UDP sockets have no meaningful TCP state; treat as Listen.
+                let state = if *protocol == Protocol::Udp {
+                    SocketState::Listen
+                } else {
+                    fd.state
+                        .clone()
+                        .unwrap_or_else(|| SocketState::Other("UNKNOWN".to_string()))
+                };
+
+                entries.push(PortEntry {
+                    port,
+                    protocol: protocol.clone(),
+                    state,
+                    pid: Some(proc.pid),
+                    process_name: proc.command.clone(),
+                    user: proc.user.clone(),
+                    local_addr,
+                    remote_addr,
+                    docker_container: None,
+                });
+            }
+            _ => {}
+        }
+    }
+
+    entries
+}
+
 /// Parse the lsof `n` (name) field into address components.
 ///
 /// `is_ipv6` comes from the `t` (file type) field and is needed to
@@ -263,5 +392,109 @@ mod tests {
             parse_lsof_state("WEIRD"),
             SocketState::Other("WEIRD".to_string())
         );
+    }
+
+    // ── parse_lsof_output ────────────────────────────────────────────────────
+
+    const SAMPLE_LSOF_OUTPUT: &str = "\
+p1234
+cnginx
+Lroot
+f6
+tIPv4
+PTCP
+TST=LISTEN
+n*:80
+f7
+tIPv6
+PTCP
+TST=LISTEN
+n[::]:80
+f8
+tIPv4
+PTCP
+TST=ESTABLISHED
+n192.168.1.1:80->10.0.0.5:52341
+p5678
+cnode
+Lhch
+f12
+tIPv4
+PTCP
+TST=LISTEN
+n127.0.0.1:3000
+f15
+tIPv4
+PUDP
+n*:5353
+";
+
+    #[test]
+    fn test_parse_lsof_output_full() {
+        let entries = parse_lsof_output(SAMPLE_LSOF_OUTPUT);
+        assert_eq!(entries.len(), 5);
+
+        // nginx listening on *:80 (IPv4)
+        assert_eq!(entries[0].pid, Some(1234));
+        assert_eq!(entries[0].process_name, Some("nginx".to_string()));
+        assert_eq!(entries[0].user, Some("root".to_string()));
+        assert_eq!(entries[0].port, 80);
+        assert_eq!(entries[0].protocol, Protocol::Tcp);
+        assert_eq!(entries[0].state, SocketState::Listen);
+        assert_eq!(entries[0].local_addr, IpAddr::V4(Ipv4Addr::UNSPECIFIED));
+        assert!(entries[0].remote_addr.is_none());
+
+        // nginx listening on [::]:80 (IPv6)
+        assert_eq!(entries[1].pid, Some(1234));
+        assert_eq!(entries[1].local_addr, IpAddr::V6(Ipv6Addr::UNSPECIFIED));
+
+        // nginx established connection
+        assert_eq!(entries[2].state, SocketState::Established);
+        let remote = entries[2].remote_addr.unwrap();
+        assert_eq!(remote.port(), 52341);
+
+        // node on 127.0.0.1:3000
+        assert_eq!(entries[3].pid, Some(5678));
+        assert_eq!(entries[3].process_name, Some("node".to_string()));
+        assert_eq!(entries[3].user, Some("hch".to_string()));
+        assert_eq!(entries[3].port, 3000);
+
+        // node UDP *:5353 — forced to SocketState::Listen
+        assert_eq!(entries[4].protocol, Protocol::Udp);
+        assert_eq!(entries[4].state, SocketState::Listen);
+        assert_eq!(entries[4].port, 5353);
+    }
+
+    #[test]
+    fn test_parse_lsof_output_ipv6_wildcard_via_t_field() {
+        // When tIPv6 is set and name is *:port, local_addr must be [::].
+        let output = "p100\nctest\nLuser\nf1\ntIPv6\nPTCP\nTST=LISTEN\nn*:443\n";
+        let entries = parse_lsof_output(output);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].local_addr, IpAddr::V6(Ipv6Addr::UNSPECIFIED));
+        assert_eq!(entries[0].port, 443);
+    }
+
+    #[test]
+    fn test_parse_lsof_output_empty() {
+        assert!(parse_lsof_output("").is_empty());
+    }
+
+    #[test]
+    fn test_parse_lsof_output_process_with_no_sockets() {
+        let output = "p999\nclaunchd\nLroot\n";
+        assert!(parse_lsof_output(output).is_empty());
+    }
+
+    #[test]
+    fn test_parse_lsof_output_skips_malformed_name() {
+        let output = "p100\ncbad\nLuser\nf1\ntIPv4\nPTCP\nTST=LISTEN\nnot-a-valid-address\n";
+        assert!(parse_lsof_output(output).is_empty());
+    }
+
+    #[test]
+    fn test_parse_lsof_output_missing_protocol_skips_fd() {
+        let output = "p100\nctest\nLuser\nf1\ntIPv4\nTST=LISTEN\nn*:80\n";
+        assert!(parse_lsof_output(output).is_empty());
     }
 }
