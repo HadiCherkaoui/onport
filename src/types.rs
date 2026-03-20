@@ -52,9 +52,9 @@ impl fmt::Display for Protocol {
 /// Socket connection state.
 ///
 /// Maps to standard TCP states. UDP sockets are always `Listen`.
-// Variants are constructed by the Linux platform module; suppressed on other
-// platforms where that module is not compiled in.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+// Variants are constructed by Linux and Windows platform modules; suppressed
+// only on macOS where neither of those modules is compiled in.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub enum SocketState {
     /// Socket is listening for incoming connections.
@@ -90,9 +90,9 @@ impl fmt::Display for SocketState {
     }
 }
 
-// from_hex is called by the Linux platform module; suppressed on other
-// platforms where that module is not compiled in.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+// from_hex is called by the Linux platform module; from_win_state is called
+// by the Windows platform module. Suppressed only on macOS.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 impl SocketState {
     /// Parse a hex state code from `/proc/net/tcp`.
     ///
@@ -108,6 +108,39 @@ impl SocketState {
             "08" => SocketState::CloseWait,
             "0A" => SocketState::Listen,
             other => SocketState::Other(other.to_string()),
+        }
+    }
+
+    /// Parse a Windows MIB TCP state code to `SocketState`.
+    ///
+    /// Maps Win32 `MIB_TCP_STATE_*` constants to `SocketState` variants.
+    #[cfg(target_os = "windows")]
+    pub fn from_win_state(state: u32) -> Self {
+        // Windows MIB_TCP_STATE constants (from mstcpip.h / iprtrmib.h)
+        const CLOSED: u32 = 1;
+        const LISTEN: u32 = 2;
+        const SYN_SENT: u32 = 3;
+        const SYN_RCVD: u32 = 4;
+        const ESTAB: u32 = 5;
+        const FIN_WAIT1: u32 = 6;
+        const FIN_WAIT2: u32 = 7;
+        const CLOSE_WAIT: u32 = 8;
+        const CLOSING: u32 = 9;
+        const LAST_ACK: u32 = 10;
+        const TIME_WAIT: u32 = 11;
+        const DELETE_TCB: u32 = 12;
+
+        match state {
+            CLOSED | DELETE_TCB => SocketState::Close,
+            LISTEN => SocketState::Listen,
+            SYN_SENT => SocketState::SynSent,
+            SYN_RCVD => SocketState::SynRecv,
+            ESTAB => SocketState::Established,
+            FIN_WAIT1 | FIN_WAIT2 => SocketState::Other("FIN_WAIT".to_string()),
+            CLOSE_WAIT => SocketState::CloseWait,
+            CLOSING | LAST_ACK => SocketState::Other("CLOSING".to_string()),
+            TIME_WAIT => SocketState::TimeWait,
+            other => SocketState::Other(format!("UNKNOWN({other})")),
         }
     }
 }
@@ -138,5 +171,17 @@ mod tests {
         assert_eq!(SocketState::Established.to_string(), "ESTABLISHED");
         assert_eq!(SocketState::TimeWait.to_string(), "TIME_WAIT");
         assert_eq!(SocketState::Other("UNKNOWN".to_string()).to_string(), "UNKNOWN");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_socket_state_from_win_state() {
+        assert_eq!(SocketState::from_win_state(2), SocketState::Listen);
+        assert_eq!(SocketState::from_win_state(5), SocketState::Established);
+        assert_eq!(SocketState::from_win_state(11), SocketState::TimeWait);
+        assert_eq!(SocketState::from_win_state(8), SocketState::CloseWait);
+        assert_eq!(SocketState::from_win_state(1), SocketState::Close);
+        assert_eq!(SocketState::from_win_state(3), SocketState::SynSent);
+        assert_eq!(SocketState::from_win_state(4), SocketState::SynRecv);
     }
 }
