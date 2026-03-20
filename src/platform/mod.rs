@@ -1,8 +1,13 @@
 // Rust guideline compliant 2026-02-16
 
-#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+#[cfg(not(any(
+    target_os = "linux",
+    target_os = "macos",
+    target_os = "windows",
+    target_os = "freebsd"
+)))]
 compile_error!(
-    "onport does not support this platform. Supported: linux, macos, windows."
+    "onport does not support this platform. Supported: linux, macos, windows, freebsd."
 );
 
 use anyhow::Result;
@@ -29,6 +34,8 @@ mod linux;
 mod macos;
 #[cfg(target_os = "windows")]
 mod windows;
+#[cfg(target_os = "freebsd")]
+mod freebsd;
 
 /// Return the platform provider for the current OS.
 ///
@@ -46,5 +53,9 @@ pub fn get_provider() -> Box<dyn PlatformProvider> {
     #[cfg(target_os = "windows")]
     {
         Box::new(windows::WindowsProvider)
+    }
+    #[cfg(target_os = "freebsd")]
+    {
+        Box::new(freebsd::FreeBsdProvider)
     }
 }

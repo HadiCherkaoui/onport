@@ -21,7 +21,8 @@ src/
 │   ├── mod.rs           # PlatformProvider trait + platform selection
 │   ├── linux.rs         # /proc/net/* parsing + inode→PID resolution
 │   ├── macos.rs         # libproc or lsof parsing
-│   └── windows.rs       # Win32 iphlpapi API
+│   ├── windows.rs       # Win32 iphlpapi API
+│   └── freebsd.rs       # sockstat output parsing
 ├── docker.rs            # Optional Docker container name resolution via bollard
 ├── types.rs             # PortEntry, Protocol, SocketState structs/enums
 ├── output/
@@ -59,4 +60,4 @@ src/
 - `cargo build` for dev, `cargo build --release` for production
 - `cargo build --no-default-features` to build without Docker support
 - Release profile uses LTO + strip for smallest binary
-- CI builds for: x86_64-linux-gnu, x86_64-apple-darwin, aarch64-apple-darwin, x86_64-windows-msvc
+- CI builds for: x86_64-linux-gnu, x86_64-apple-darwin, aarch64-apple-darwin, x86_64-windows-msvc, x86_64-unknown-freebsd
