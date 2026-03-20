@@ -1,5 +1,6 @@
 // Rust guideline compliant 2026-02-16
 
+mod platform;
 mod types;
 
 fn main() {
