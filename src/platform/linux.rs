@@ -31,6 +31,8 @@ impl PlatformProvider for LinuxProvider {
         let mut raw_entries = Vec::new();
         raw_entries.extend(read_proc_net("/proc/net/tcp", false, Protocol::Tcp));
         raw_entries.extend(read_proc_net("/proc/net/tcp6", true, Protocol::Tcp));
+        raw_entries.extend(read_proc_net("/proc/net/udp", false, Protocol::Udp));
+        raw_entries.extend(read_proc_net("/proc/net/udp6", true, Protocol::Udp));
 
         let inode_to_pid = build_inode_to_pid_map();
         let username_cache = build_username_cache();
@@ -45,10 +47,17 @@ impl PlatformProvider for LinuxProvider {
                     .cloned()
                     .or_else(|| Some(raw.uid.to_string()));
 
+                // UDP sockets don't have TCP state machine; treat all as LISTEN.
+                let state = if raw.protocol == Protocol::Udp {
+                    SocketState::Listen
+                } else {
+                    raw.state
+                };
+
                 PortEntry {
                     port: raw.port,
                     protocol: raw.protocol,
-                    state: raw.state,
+                    state,
                     pid,
                     process_name,
                     user,
@@ -96,10 +105,10 @@ fn parse_hex_port(hex: &str) -> Option<u16> {
     u16::from_str_radix(hex, 16).ok()
 }
 
-/// Parse a single line from `/proc/net/tcp` or `/proc/net/tcp6`.
+/// Parse a single line from `/proc/net/tcp`, `/proc/net/tcp6`, `/proc/net/udp`, or `/proc/net/udp6`.
 ///
 /// Returns `None` for header lines or unparseable entries.
-fn parse_proc_line(line: &str, is_ipv6: bool) -> Option<RawSocketEntry> {
+fn parse_proc_line(line: &str, is_ipv6: bool, protocol: Protocol) -> Option<RawSocketEntry> {
     let line = line.trim();
     if line.starts_with("sl") || line.is_empty() {
         return None;
@@ -138,7 +147,7 @@ fn parse_proc_line(line: &str, is_ipv6: bool) -> Option<RawSocketEntry> {
         state,
         uid,
         inode,
-        protocol: Protocol::Tcp,
+        protocol,
     })
 }
 
@@ -151,11 +160,7 @@ fn read_proc_net(path: &str, is_ipv6: bool, protocol: Protocol) -> Vec<RawSocket
 
     content
         .lines()
-        .filter_map(|line| {
-            let mut entry = parse_proc_line(line, is_ipv6)?;
-            entry.protocol = protocol.clone();
-            Some(entry)
-        })
+        .filter_map(|line| parse_proc_line(line, is_ipv6, protocol.clone()))
         .collect()
 }
 
@@ -243,14 +248,30 @@ mod tests {
     const SAMPLE_TCP_LINE: &str =
         "   0: 0100007F:1F90 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 12345 1 0000000000000000 100 0 0 10 0";
 
+    // Sample line from /proc/net/udp (0.0.0.0:53, state=07 Close, uid=101, inode=67890)
+    const SAMPLE_UDP_LINE: &str =
+        "   0: 00000000:0035 00000000:0000 07 00000000:00000000 00:00000000 00000000   101        0 67890 2 0000000000000000";
+
     #[test]
     fn test_parse_proc_net_tcp_line() {
-        let entry = parse_proc_line(SAMPLE_TCP_LINE, false).expect("should parse");
+        let entry = parse_proc_line(SAMPLE_TCP_LINE, false, Protocol::Tcp).expect("should parse");
         assert_eq!(entry.local_addr, IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)));
         assert_eq!(entry.port, 8080);
         assert_eq!(entry.state, SocketState::Listen);
         assert_eq!(entry.uid, 1000);
         assert_eq!(entry.inode, 12345);
+        assert_eq!(entry.protocol, Protocol::Tcp);
+    }
+
+    #[test]
+    fn test_parse_proc_net_udp_line() {
+        let entry = parse_proc_line(SAMPLE_UDP_LINE, false, Protocol::Udp).expect("should parse");
+        assert_eq!(entry.local_addr, IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)));
+        assert_eq!(entry.port, 53);
+        assert_eq!(entry.state, SocketState::Close); // raw state from /proc/net/udp
+        assert_eq!(entry.uid, 101);
+        assert_eq!(entry.inode, 67890);
+        assert_eq!(entry.protocol, Protocol::Udp);
     }
 
     #[test]
@@ -277,12 +298,13 @@ mod tests {
         let result = parse_proc_line(
             "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode",
             false,
+            Protocol::Tcp,
         );
         assert!(result.is_none());
     }
 
     #[test]
     fn test_skip_empty_line() {
-        assert!(parse_proc_line("", false).is_none());
+        assert!(parse_proc_line("", false, Protocol::Tcp).is_none());
     }
 }
