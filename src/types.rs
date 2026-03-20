@@ -90,9 +90,10 @@ impl fmt::Display for SocketState {
     }
 }
 
-// from_hex is called by the Linux platform module; from_win_state is called
-// by the Windows platform module. Suppressed only on macOS.
-#[cfg_attr(target_os = "macos", allow(dead_code))]
+// from_hex is called only by the Linux platform module (dead on macOS and
+// Windows); from_win_state is compiled only on Windows and calls back into
+// the variants. Suppress dead_code for from_hex on all non-Linux platforms.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 impl SocketState {
     /// Parse a hex state code from `/proc/net/tcp`.
     ///
