@@ -115,6 +115,9 @@ pub fn run_watch(
             docker::enrich_with_docker(&mut entries);
         }
 
+        // Collapse same-service entries (e.g., docker-proxy IPv4/IPv6) for display.
+        crate::dedup_same_service(&mut entries);
+
         // ── 2. Diff against previous snapshot ────────────────────────────────
         let curr_keys: HashSet<(u16, IpAddr)> =
             entries.iter().map(|e| (e.port, e.local_addr)).collect();

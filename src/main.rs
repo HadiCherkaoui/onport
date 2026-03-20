@@ -154,7 +154,12 @@ fn main() -> Result<()> {
         OutputFormat::Table
     };
 
-    output::render(&entries, &format, cli.no_color)?;
+    // Build a deduplicated copy for display. The original `entries` is kept
+    // intact so the enhanced single-port view and kill path see all PIDs.
+    let mut display_entries = entries.clone();
+    dedup_same_service(&mut display_entries);
+
+    output::render(&display_entries, &format, cli.no_color)?;
 
     // Enhanced single-port view: show process details and offer an inline kill prompt
     // when exactly one port is queried, a single process matched, and we are in a TTY.
@@ -224,6 +229,32 @@ pub(crate) fn dedup_entries(entries: &mut Vec<types::PortEntry>) {
             Some(e.local_addr)
         };
         seen.insert((e.port, e.protocol.clone(), e.pid, e.state.clone(), norm_addr, e.remote_addr))
+    });
+}
+
+/// Collapse entries that represent the same logical service for display purposes.
+///
+/// docker-proxy spawns separate IPv4 and IPv6 listener processes for the same
+/// port, producing two rows that are visually identical from the user's
+/// perspective. This function collapses entries sharing the same
+/// `(port, protocol, state, process_name)` tuple down to a single row.
+///
+/// **Display only** — this is called on a clone of entries. The original slice
+/// is unchanged so that the kill path and enhanced detail view can still
+/// operate on all PIDs.
+pub(crate) fn dedup_same_service(entries: &mut Vec<types::PortEntry>) {
+    use std::collections::HashSet;
+
+    // Key: (port, protocol, state, process_name)
+    let mut seen: HashSet<(u16, String, String, String)> = HashSet::new();
+    entries.retain(|e| {
+        let key = (
+            e.port,
+            e.protocol.to_string(),
+            e.state.to_string(),
+            e.process_name.as_deref().unwrap_or("?").to_string(),
+        );
+        seen.insert(key)
     });
 }
 
@@ -393,6 +424,66 @@ mod tests {
             make_entry(IpAddr::V6(Ipv6Addr::UNSPECIFIED), "docker-proxy"),
         ];
         assert!(is_single_process(&entries));
+    }
+
+    #[test]
+    fn test_dedup_same_service_collapses_docker_proxy() {
+        use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+        use crate::types::{PortEntry, Protocol, SocketState};
+
+        fn make_proxy_entry(addr: IpAddr, pid: u32) -> PortEntry {
+            PortEntry {
+                port: 8888,
+                protocol: Protocol::Tcp,
+                state: SocketState::Listen,
+                pid: Some(pid),
+                process_name: Some("docker-proxy".to_string()),
+                user: None,
+                local_addr: addr,
+                remote_addr: None,
+                docker_container: None,
+            }
+        }
+
+        // Two docker-proxy entries (IPv4 + IPv6), different PIDs
+        let mut entries = vec![
+            make_proxy_entry(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 1001),
+            make_proxy_entry(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 1002),
+        ];
+
+        dedup_same_service(&mut entries);
+
+        assert_eq!(entries.len(), 1, "two docker-proxy entries should collapse to one for display");
+    }
+
+    #[test]
+    fn test_dedup_same_service_keeps_different_processes() {
+        use std::net::{IpAddr, Ipv4Addr};
+        use crate::types::{PortEntry, Protocol, SocketState};
+
+        fn make_entry(port: u16, name: &str) -> PortEntry {
+            PortEntry {
+                port,
+                protocol: Protocol::Tcp,
+                state: SocketState::Listen,
+                pid: Some(100),
+                process_name: Some(name.to_string()),
+                user: None,
+                local_addr: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                remote_addr: None,
+                docker_container: None,
+            }
+        }
+
+        // Two different services on different ports — must not be collapsed
+        let mut entries = vec![
+            make_entry(80, "nginx"),
+            make_entry(443, "nginx"),
+        ];
+
+        dedup_same_service(&mut entries);
+
+        assert_eq!(entries.len(), 2, "different ports must not be collapsed");
     }
 
     #[test]
