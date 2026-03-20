@@ -17,7 +17,6 @@ mimalloc = "0.1.48"
 owo-colors = "4.3.0"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
-sysinfo = "0.38.4"
 tabled = "0.20.0"
 tokio = { version = "1.50.0", features = ["rt", "net"], optional = true }
 
@@ -26,6 +25,7 @@ default = ["docker"]
 docker = ["dep:tokio", "dep:bollard"]
 
 [target.'cfg(windows)'.dependencies]
+sysinfo = "0.38.4"
 windows = { version = "0.62", features = [
     "Win32_NetworkManagement_IpHelper",
     "Win32_Foundation",
