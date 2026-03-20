@@ -2,7 +2,7 @@
 
 //! Process termination logic.
 //!
-//! Supports SIGTERM/SIGKILL on Unix.
+//! Supports SIGTERM/SIGKILL on Unix and `taskkill` on Windows.
 //! Includes safety checks: never kills PID 1, kernel threads,
 //! or the current shell process.
 
@@ -17,7 +17,7 @@ use crate::types::PortEntry;
 /// # Errors
 ///
 /// Returns an error describing why the kill would be unsafe.
-#[cfg_attr(not(unix), allow(dead_code))]
+#[cfg_attr(not(any(unix, windows)), allow(dead_code))]
 pub fn is_safe_to_kill(entry: &PortEntry) -> Result<()> {
     let pid = entry
         .pid
@@ -53,7 +53,7 @@ pub fn is_safe_to_kill(entry: &PortEntry) -> Result<()> {
 /// # Errors
 ///
 /// Returns an error if reading from stdin fails.
-#[cfg_attr(not(unix), allow(dead_code))]
+#[cfg_attr(not(any(unix, windows)), allow(dead_code))]
 pub fn confirm_kill(entry: &PortEntry) -> Result<bool> {
     let pid = entry.pid.ok_or_else(|| anyhow!("No PID available for this socket"))?;
     let name = entry
@@ -77,8 +77,8 @@ pub fn confirm_kill(entry: &PortEntry) -> Result<bool> {
 
 /// Kill the process owning `entry`.
 ///
-/// Sends SIGTERM (or SIGKILL with `force = true`).
-/// After SIGTERM, waits up to 3 s for the process to exit.
+/// On Unix, sends SIGTERM (or SIGKILL with `force = true`) and polls for exit.
+/// On Windows, invokes `taskkill` (with `/F` when `force = true`).
 ///
 /// # Errors
 ///
@@ -129,10 +129,45 @@ pub fn kill_process(entry: &PortEntry, force: bool) -> Result<()> {
         Ok(())
     }
 
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        is_safe_to_kill(entry)?;
+
+        if !force {
+            let confirmed = confirm_kill(entry)?;
+            if !confirmed {
+                println!("Aborted.");
+                return Ok(());
+            }
+        }
+
+        let pid = entry
+            .pid
+            .ok_or_else(|| anyhow!("No PID available for this socket"))?;
+
+        let mut cmd = std::process::Command::new("taskkill");
+        cmd.args(["/PID", &pid.to_string()]);
+        if force {
+            // /F forces termination; without it taskkill sends a close message.
+            cmd.arg("/F");
+        }
+
+        let output = cmd
+            .output()
+            .map_err(|e| anyhow!("Failed to run taskkill: {e}"))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow!("taskkill failed: {}", stderr.trim()));
+        }
+
+        Ok(())
+    }
+
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = (entry, force);
-        Err(anyhow!("Kill is only supported on Unix"))
+        Err(anyhow!("Kill is not supported on this platform"))
     }
 }
 
@@ -190,5 +225,13 @@ mod tests {
             msg.contains("No PID"),
             "expected no PID message, got: {msg}"
         );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_safe_to_kill_normal_pid_accepted() {
+        // A large PID that is unlikely to be the current process or PID 1.
+        let entry = fake_entry(Some(99999));
+        assert!(is_safe_to_kill(&entry).is_ok());
     }
 }
