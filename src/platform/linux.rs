@@ -1,8 +1,8 @@
-// Rust guideline compliant 2026-02-16
+// Rust guideline compliant 2026-03-20
 
 use std::collections::HashMap;
 use std::fs;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
 use anyhow::Result;
 
@@ -20,6 +20,7 @@ pub struct LinuxProvider;
 struct RawSocketEntry {
     port: u16,
     local_addr: IpAddr,
+    remote_addr: Option<SocketAddr>,
     state: SocketState,
     uid: u32,
     inode: u64,
@@ -62,7 +63,7 @@ impl PlatformProvider for LinuxProvider {
                     process_name,
                     user,
                     local_addr: raw.local_addr,
-                    remote_addr: None,
+                    remote_addr: raw.remote_addr,
                     docker_container: None,
                 }
             })
@@ -132,6 +133,23 @@ fn parse_proc_line(line: &str, is_ipv6: bool, protocol: Protocol) -> Option<RawS
     };
     let port = parse_hex_port(local_parts[1])?;
 
+    // Field 2: rem_address (hex_ip:hex_port); zero port means no remote peer.
+    let remote_parts: Vec<&str> = fields[2].split(':').collect();
+    let remote_addr = if remote_parts.len() == 2 {
+        let remote_port = parse_hex_port(remote_parts[1]).unwrap_or(0);
+        if remote_port == 0 {
+            None
+        } else if is_ipv6 {
+            parse_hex_ipv6(remote_parts[0])
+                .map(|ip| SocketAddr::new(IpAddr::V6(ip), remote_port))
+        } else {
+            parse_hex_ipv4(remote_parts[0])
+                .map(|ip| SocketAddr::new(IpAddr::V4(ip), remote_port))
+        }
+    } else {
+        None
+    };
+
     // Field 3: state (for UDP, kernel reports 07 for bound sockets)
     let state = SocketState::from_hex(fields[3]);
 
@@ -144,6 +162,7 @@ fn parse_proc_line(line: &str, is_ipv6: bool, protocol: Protocol) -> Option<RawS
     Some(RawSocketEntry {
         port,
         local_addr,
+        remote_addr,
         state,
         uid,
         inode,
@@ -248,6 +267,10 @@ mod tests {
     const SAMPLE_TCP_LINE: &str =
         "   0: 0100007F:1F90 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 12345 1 0000000000000000 100 0 0 10 0";
 
+    // Established connection: 127.0.0.1:8080 -> 10.0.0.5:443
+    const SAMPLE_TCP_ESTABLISHED: &str =
+        "   1: 0100007F:1F90 0500000A:01BB 01 00000000:00000000 00:00000000 00000000  1000        0 23456 1 0000000000000000 100 0 0 10 0";
+
     // Sample line from /proc/net/udp (0.0.0.0:53, state=07 = bound socket, uid=101, inode=67890)
     const SAMPLE_UDP_LINE: &str =
         "   0: 00000000:0035 00000000:0000 07 00000000:00000000 00:00000000 00000000   101        0 67890 2 0000000000000000";
@@ -291,6 +314,30 @@ mod tests {
         assert_eq!(parse_hex_port("1F90"), Some(8080));
         assert_eq!(parse_hex_port("0050"), Some(80));
         assert_eq!(parse_hex_port("0016"), Some(22));
+    }
+
+    #[test]
+    fn test_parse_proc_net_tcp_established_has_remote() {
+        let entry =
+            parse_proc_line(SAMPLE_TCP_ESTABLISHED, false, Protocol::Tcp).expect("should parse");
+        assert_eq!(entry.local_addr, IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)));
+        assert_eq!(entry.port, 8080);
+        assert_eq!(entry.state, SocketState::Established);
+        let remote = entry
+            .remote_addr
+            .expect("established connection should have remote_addr");
+        assert_eq!(remote.ip(), IpAddr::V4(Ipv4Addr::new(10, 0, 0, 5)));
+        assert_eq!(remote.port(), 443);
+    }
+
+    #[test]
+    fn test_parse_proc_net_tcp_listen_has_no_remote() {
+        let entry =
+            parse_proc_line(SAMPLE_TCP_LINE, false, Protocol::Tcp).expect("should parse");
+        assert!(
+            entry.remote_addr.is_none(),
+            "LISTEN socket should have no remote_addr"
+        );
     }
 
     #[test]
