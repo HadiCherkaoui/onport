@@ -1,0 +1,214 @@
+variables:
+  CARGO_HOME: "$CI_PROJECT_DIR/.cargo"
+
+cache:
+  key:
+    files:
+      - Cargo.lock
+  paths:
+    - .cargo/registry/
+    - .cargo/git/
+
+stages:
+  - test
+  - build
+  - release
+
+test:
+  stage: test
+  image: rust:latest
+  script:
+    - cargo test && cargo clippy -- -D warnings
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/'
+      when: never
+    - changes:
+        - src/**/*
+        - tests/**/*
+        - Cargo.toml
+        - Cargo.lock
+        - .gitlab-ci.yml
+
+build:linux-x86_64:
+  stage: build
+  image: rust:latest
+  before_script:
+    - apt-get update && apt-get install -y musl-tools
+    - rustup target add x86_64-unknown-linux-musl
+  script:
+    - cargo build --release --target x86_64-unknown-linux-musl
+    - cp target/x86_64-unknown-linux-musl/release/onport onport-linux-x86_64
+    - |
+      curl --header "JOB-TOKEN: $CI_JOB_TOKEN" \
+        --upload-file onport-linux-x86_64 \
+        "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/onport/$CI_COMMIT_TAG/onport-linux-x86_64"
+  artifacts:
+    paths:
+      - onport-linux-x86_64
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/'
+
+build:linux-aarch64:
+  stage: build
+  image: rust:latest
+  variables:
+    CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+  before_script:
+    - apt-get update && apt-get install -y gcc-aarch64-linux-gnu
+    - rustup target add aarch64-unknown-linux-gnu
+  script:
+    - cargo build --release --target aarch64-unknown-linux-gnu
+    - cp target/aarch64-unknown-linux-gnu/release/onport onport-linux-aarch64
+    - |
+      curl --header "JOB-TOKEN: $CI_JOB_TOKEN" \
+        --upload-file onport-linux-aarch64 \
+        "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/onport/$CI_COMMIT_TAG/onport-linux-aarch64"
+  artifacts:
+    paths:
+      - onport-linux-aarch64
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/'
+
+build:windows-x86_64:
+  stage: build
+  image: rust:latest
+  before_script:
+    - apt-get update && apt-get install -y gcc-mingw-w64-x86-64
+    - rustup target add x86_64-pc-windows-gnu
+  script:
+    - cargo build --release --target x86_64-pc-windows-gnu --no-default-features
+    - cp target/x86_64-pc-windows-gnu/release/onport.exe onport-windows-x86_64.exe
+    - |
+      curl --header "JOB-TOKEN: $CI_JOB_TOKEN" \
+        --upload-file onport-windows-x86_64.exe \
+        "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/onport/$CI_COMMIT_TAG/onport-windows-x86_64.exe"
+  artifacts:
+    paths:
+      - onport-windows-x86_64.exe
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/'
+
+build:macos-x86_64:
+  stage: build
+  tags:
+    - macos
+  allow_failure: true
+  before_script:
+    - rustup target add x86_64-apple-darwin
+  script:
+    - cargo build --release --target x86_64-apple-darwin
+    - cp target/x86_64-apple-darwin/release/onport onport-macos-x86_64
+    - |
+      curl --header "JOB-TOKEN: $CI_JOB_TOKEN" \
+        --upload-file onport-macos-x86_64 \
+        "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/onport/$CI_COMMIT_TAG/onport-macos-x86_64"
+  artifacts:
+    paths:
+      - onport-macos-x86_64
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/'
+
+build:macos-aarch64:
+  stage: build
+  tags:
+    - macos
+  allow_failure: true
+  before_script:
+    - rustup target add aarch64-apple-darwin
+  script:
+    - cargo build --release --target aarch64-apple-darwin
+    - cp target/aarch64-apple-darwin/release/onport onport-macos-aarch64
+    - |
+      curl --header "JOB-TOKEN: $CI_JOB_TOKEN" \
+        --upload-file onport-macos-aarch64 \
+        "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/onport/$CI_COMMIT_TAG/onport-macos-aarch64"
+  artifacts:
+    paths:
+      - onport-macos-aarch64
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/'
+
+build:freebsd-x86_64:
+  stage: build
+  tags:
+    - freebsd
+  allow_failure: true
+  before_script:
+    - rustup target add x86_64-unknown-freebsd
+  script:
+    - cargo build --release --target x86_64-unknown-freebsd
+    - cp target/x86_64-unknown-freebsd/release/onport onport-freebsd-x86_64
+    - |
+      curl --header "JOB-TOKEN: $CI_JOB_TOKEN" \
+        --upload-file onport-freebsd-x86_64 \
+        "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/onport/$CI_COMMIT_TAG/onport-freebsd-x86_64"
+  artifacts:
+    paths:
+      - onport-freebsd-x86_64
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/'
+
+release:
+  stage: release
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  needs:
+    - job: build:linux-x86_64
+      artifacts: false
+    - job: build:linux-aarch64
+      artifacts: false
+    - job: build:windows-x86_64
+      artifacts: false
+    - job: build:macos-x86_64
+      artifacts: false
+      optional: true
+    - job: build:macos-aarch64
+      artifacts: false
+      optional: true
+    - job: build:freebsd-x86_64
+      artifacts: false
+      optional: true
+  script:
+    - echo "Creating release $CI_COMMIT_TAG"
+  release:
+    tag_name: "$CI_COMMIT_TAG"
+    name: "onport $CI_COMMIT_TAG"
+    description: |
+      ## onport $CI_COMMIT_TAG
+
+      A cross-platform CLI tool that shows what processes are listening on which ports.
+
+      ### Quick Install
+
+      **Linux/macOS:**
+      ```sh
+      curl -sSfL https://gitlab.cherkaoui.ch/HadiCherkaoui/onport/-/raw/main/install.sh | bash
+      ```
+
+      **Windows (PowerShell):**
+      ```powershell
+      irm https://gitlab.cherkaoui.ch/HadiCherkaoui/onport/-/raw/main/install.ps1 | iex
+      ```
+
+      ### Downloads
+    assets:
+      links:
+        - name: "onport-linux-x86_64"
+          url: "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/onport/$CI_COMMIT_TAG/onport-linux-x86_64"
+          link_type: package
+        - name: "onport-linux-aarch64"
+          url: "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/onport/$CI_COMMIT_TAG/onport-linux-aarch64"
+          link_type: package
+        - name: "onport-windows-x86_64.exe"
+          url: "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/onport/$CI_COMMIT_TAG/onport-windows-x86_64.exe"
+          link_type: package
+        - name: "onport-macos-x86_64"
+          url: "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/onport/$CI_COMMIT_TAG/onport-macos-x86_64"
+          link_type: package
+        - name: "onport-macos-aarch64"
+          url: "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/onport/$CI_COMMIT_TAG/onport-macos-aarch64"
+          link_type: package
+        - name: "onport-freebsd-x86_64"
+          url: "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/onport/$CI_COMMIT_TAG/onport-freebsd-x86_64"
+          link_type: package
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/'

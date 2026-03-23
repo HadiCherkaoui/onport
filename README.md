@@ -4,6 +4,10 @@
 
 `onport` is a cross-platform CLI tool that instantly shows what processes are listening on which ports. One command replaces `lsof -i`, `ss -tlnp`, `netstat -an`, and `Get-NetTCPConnection`.
 
+> **Downloading?** Pre-built binaries are available on GitLab — see the
+> [latest release](https://gitlab.cherkaoui.ch/HadiCherkaoui/onport/-/releases/permalink/latest)
+> for Linux, Windows, macOS, and FreeBSD downloads.
+
 ## Features
 
 - **Instant**: Shows all listening ports in under 50ms
@@ -25,15 +29,40 @@
 
 ## Installation
 
+### Pre-built binaries (fastest)
+
 ```bash
-# From source
+# Linux / macOS — one-liner
+curl -sSfL https://gitlab.cherkaoui.ch/HadiCherkaoui/onport/-/raw/main/install.sh | bash
+
+# Windows — PowerShell one-liner
+irm https://gitlab.cherkaoui.ch/HadiCherkaoui/onport/-/raw/main/install.ps1 | iex
+```
+
+Or download a binary directly from the
+[latest release](https://gitlab.cherkaoui.ch/HadiCherkaoui/onport/-/releases/permalink/latest).
+
+### From source
+
+```bash
 cargo install onport
 
-# Or clone and build
-git clone https://github.com/hadihallak/onport
+# or clone and build
+git clone https://gitlab.cherkaoui.ch/HadiCherkaoui/onport
 cd onport
 cargo build --release
 ```
+
+## Platform support
+
+| Platform | Tested | CI build |
+|----------|--------|----------|
+| Linux x86_64 | ✅ Tested | musl static binary |
+| Linux ARM64 | ✅ Tested | GNU binary |
+| Windows x86_64 | ✅ Tested | mingw cross-compile |
+| macOS x86_64 | ⚠️ Untested (needs macOS runner) | native build |
+| macOS ARM64 | ⚠️ Untested (needs macOS runner) | native build |
+| FreeBSD x86_64 | ⚠️ Untested (needs FreeBSD runner) | native build |
 
 ## Usage
 
