@@ -60,9 +60,9 @@ cargo build --release
 | Linux x86_64 | ✅ Tested | musl static binary |
 | Linux ARM64 | ✅ Tested | GNU binary |
 | Windows x86_64 | ✅ Tested | mingw cross-compile |
-| macOS x86_64 | ⚠️ Untested (needs macOS runner) | native build |
-| macOS ARM64 | ⚠️ Untested (needs macOS runner) | native build |
-| FreeBSD x86_64 | ⚠️ Untested (needs FreeBSD runner) | native build |
+| macOS x86_64 | ⚠️ Untested | cross-compiled via cargo-zigbuild |
+| macOS ARM64 | ⚠️ Untested | cross-compiled via cargo-zigbuild |
+| FreeBSD x86_64 | ⚠️ Untested | cross-compiled via cargo-zigbuild |
 
 ## Usage
 
