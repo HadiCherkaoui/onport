@@ -2,6 +2,8 @@
 
 > See what's listening on your ports.
 
+![onport demo](demo.gif)
+
 `onport` is a cross-platform CLI tool that instantly shows what processes are listening on which ports. One command replaces `lsof -i`, `ss -tlnp`, `netstat -an`, and `Get-NetTCPConnection`.
 
 > **Downloading?** Pre-built binaries are available on GitLab — see the
