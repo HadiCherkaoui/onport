@@ -12,6 +12,7 @@ use std::io::{IsTerminal, Write as _};
 
 use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser};
+#[cfg(not(target_os = "freebsd"))]
 use mimalloc::MiMalloc;
 
 use output::OutputFormat;
@@ -20,6 +21,9 @@ use output::OutputFormat;
 ///
 /// Applications should prefer mimalloc; we have observed up to 25%
 /// benchmark improvements along allocating hot paths.
+/// FreeBSD uses the system allocator: mimalloc requires `pthread.h`
+/// which is absent from zig's FreeBSD cross-compilation sysroot.
+#[cfg(not(target_os = "freebsd"))]
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
