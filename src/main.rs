@@ -69,6 +69,14 @@ struct Cli {
     #[arg(long = "pid")]
     pid: Option<u32>,
 
+    /// Show only IPv4 sockets.
+    #[arg(short = '4', long = "ipv4")]
+    ipv4: bool,
+
+    /// Show only IPv6 sockets.
+    #[arg(short = '6', long = "ipv6")]
+    ipv6: bool,
+
     /// Live-updating watch mode (refresh every 2s).
     #[arg(short = 'w', long = "watch", conflicts_with_all = ["kill", "json"])]
     watch: bool,
@@ -104,6 +112,8 @@ fn main() -> Result<()> {
             no_docker: cli.no_docker,
             name_filter: cli.name.as_deref(),
             pid_filter: cli.pid,
+            ipv4_only: cli.ipv4 && !cli.ipv6,
+            ipv6_only: cli.ipv6 && !cli.ipv4,
         };
         return output::watch::run_watch(provider.as_ref(), &opts);
     }
@@ -142,6 +152,13 @@ fn main() -> Result<()> {
     // Filter by PID
     if let Some(pid_filter) = cli.pid {
         entries.retain(|e| e.pid == Some(pid_filter));
+    }
+
+    // Filter by IP version
+    if cli.ipv4 && !cli.ipv6 {
+        entries.retain(|e| e.local_addr.is_ipv4());
+    } else if cli.ipv6 && !cli.ipv4 {
+        entries.retain(|e| e.local_addr.is_ipv6());
     }
 
     // Deduplicate wildcard IPv4/IPv6 entries that represent the same socket
@@ -607,5 +624,41 @@ mod tests {
         let pid_filter: u32 = 9999;
         entries.retain(|e| e.pid == Some(pid_filter));
         assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn test_ipv4_filter_retains_only_ipv4() {
+        use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+        use crate::types::{PortEntry, Protocol, SocketState};
+
+        let mut entries = vec![
+            PortEntry { port: 80, protocol: Protocol::Tcp, state: SocketState::Listen, pid: None,
+                        process_name: None, user: None,
+                        local_addr: IpAddr::V4(Ipv4Addr::UNSPECIFIED), remote_addr: None, docker_container: None },
+            PortEntry { port: 80, protocol: Protocol::Tcp, state: SocketState::Listen, pid: None,
+                        process_name: None, user: None,
+                        local_addr: IpAddr::V6(Ipv6Addr::UNSPECIFIED), remote_addr: None, docker_container: None },
+        ];
+        entries.retain(|e| e.local_addr.is_ipv4());
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].local_addr.is_ipv4());
+    }
+
+    #[test]
+    fn test_ipv6_filter_retains_only_ipv6() {
+        use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+        use crate::types::{PortEntry, Protocol, SocketState};
+
+        let mut entries = vec![
+            PortEntry { port: 80, protocol: Protocol::Tcp, state: SocketState::Listen, pid: None,
+                        process_name: None, user: None,
+                        local_addr: IpAddr::V4(Ipv4Addr::UNSPECIFIED), remote_addr: None, docker_container: None },
+            PortEntry { port: 80, protocol: Protocol::Tcp, state: SocketState::Listen, pid: None,
+                        process_name: None, user: None,
+                        local_addr: IpAddr::V6(Ipv6Addr::UNSPECIFIED), remote_addr: None, docker_container: None },
+        ];
+        entries.retain(|e| e.local_addr.is_ipv6());
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].local_addr.is_ipv6());
     }
 }

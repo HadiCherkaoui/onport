@@ -137,3 +137,27 @@ fn pid_filter_nonexistent_returns_empty_json() {
     let parsed: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert!(parsed.as_array().unwrap().is_empty());
 }
+
+#[test]
+fn ipv4_flag_exits_zero() {
+    let output = onport()
+        .args(["--ipv4", "--json"])
+        .output()
+        .expect("failed to run onport");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert!(parsed.is_array());
+}
+
+#[test]
+fn ipv6_flag_exits_zero() {
+    let output = onport()
+        .args(["--ipv6", "--json"])
+        .output()
+        .expect("failed to run onport");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert!(parsed.is_array());
+}

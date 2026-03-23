@@ -79,6 +79,10 @@ pub struct WatchOptions<'a> {
     pub name_filter: Option<&'a str>,
     /// Restrict display to a single PID.
     pub pid_filter: Option<u32>,
+    /// Show only IPv4 sockets.
+    pub ipv4_only: bool,
+    /// Show only IPv6 sockets.
+    pub ipv6_only: bool,
 }
 
 /// Run the live-updating watch loop.
@@ -128,6 +132,13 @@ pub fn run_watch(provider: &dyn PlatformProvider, opts: &WatchOptions<'_>) -> Re
 
         if let Some(pid_filter) = opts.pid_filter {
             entries.retain(|e| e.pid == Some(pid_filter));
+        }
+
+        // Filter by IP version
+        if opts.ipv4_only {
+            entries.retain(|e| e.local_addr.is_ipv4());
+        } else if opts.ipv6_only {
+            entries.retain(|e| e.local_addr.is_ipv6());
         }
 
         // Deduplicate wildcard IPv4/IPv6 entries that represent the same socket
