@@ -10,6 +10,29 @@ use std::collections::HashMap;
 
 use crate::types::PortEntry;
 
+/// Extract a Docker container ID from the content of `/proc/{pid}/cgroup`.
+///
+/// Searches each line for a 64-character hexadecimal segment, which Docker
+/// uses as the container ID in all known cgroup path formats:
+/// - cgroup v1: `/docker/<id>`
+/// - cgroup v2 systemd: `docker-<id>.scope`
+/// - Kubernetes: `/kubepods/burstable/pod.../<id>`
+///
+/// Returns `None` if no container ID is found (i.e., the process is not
+/// in a Docker container).
+#[cfg_attr(not(all(feature = "docker", target_os = "linux")), allow(dead_code))]
+pub(crate) fn extract_container_id(cgroup_content: &str) -> Option<String> {
+    for line in cgroup_content.lines() {
+        let path = line.splitn(3, ':').nth(2).unwrap_or(line);
+        for segment in path.split(['/', '-', '.']) {
+            if segment.len() == 64 && segment.chars().all(|c| c.is_ascii_hexdigit()) {
+                return Some(segment.to_string());
+            }
+        }
+    }
+    None
+}
+
 /// Enrich port entries with Docker container names by matching on public port numbers.
 ///
 /// When the `docker` feature is enabled, this function connects to the Docker
@@ -91,6 +114,66 @@ async fn enrich_async(entries: &mut [PortEntry]) {
     }
 
     apply_port_mapping(entries, &port_to_container);
+
+    // Second pass: cgroup-based enrichment for --net=host containers and
+    // processes visible in the host PID namespace.
+    #[cfg(target_os = "linux")]
+    enrich_via_cgroup(&docker, entries).await;
+}
+
+/// Enrich port entries with Docker container names via cgroup inspection.
+///
+/// For each entry that lacks a `docker_container` label but has a known PID,
+/// reads `/proc/{pid}/cgroup`, extracts the container ID, and resolves the
+/// container name via the Docker API.
+///
+/// Handles containers using `--net=host` or whose PID is directly visible
+/// in the host namespace — cases the port-mapping pass would miss.
+///
+/// Silently skips any entry where cgroup reading or inspection fails.
+#[cfg(all(feature = "docker", target_os = "linux"))]
+async fn enrich_via_cgroup(docker: &bollard::Docker, entries: &mut [PortEntry]) {
+    use std::collections::HashMap;
+
+    let mut pid_to_container_id: HashMap<u32, String> = HashMap::new();
+
+    for entry in entries.iter().filter(|e| e.docker_container.is_none() && e.pid.is_some()) {
+        let Some(pid) = entry.pid else { continue };
+        if pid_to_container_id.contains_key(&pid) {
+            continue;
+        }
+        let Ok(content) = std::fs::read_to_string(format!("/proc/{pid}/cgroup")) else {
+            continue;
+        };
+        if let Some(id) = extract_container_id(&content) {
+            pid_to_container_id.insert(pid, id);
+        }
+    }
+
+    let unique_ids: std::collections::HashSet<String> =
+        pid_to_container_id.values().cloned().collect();
+    let mut id_to_name: HashMap<String, String> = HashMap::new();
+
+    for id in unique_ids {
+        if let Ok(info) = docker.inspect_container(&id, None).await {
+            if let Some(name) = info.name {
+                id_to_name.insert(id, name.trim_start_matches('/').to_string());
+            }
+        }
+    }
+
+    for entry in entries.iter_mut() {
+        if entry.docker_container.is_some() {
+            continue;
+        }
+        if let Some(pid) = entry.pid {
+            if let Some(container_id) = pid_to_container_id.get(&pid) {
+                if let Some(name) = id_to_name.get(container_id) {
+                    entry.docker_container = Some(name.clone());
+                }
+            }
+        }
+    }
 }
 
 /// Apply a port → container name mapping to a slice of `PortEntry` values.
@@ -174,5 +257,37 @@ mod tests {
         apply_port_mapping(&mut entries, &map);
 
         assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn test_extract_container_id_cgroup_v1() {
+        let id = "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890";
+        let content = format!("12:memory:/docker/{id}\n");
+        assert_eq!(extract_container_id(&content), Some(id.to_string()));
+    }
+
+    #[test]
+    fn test_extract_container_id_cgroup_v2_systemd() {
+        let id = "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890";
+        let content = format!("0::/system.slice/docker-{id}.scope\n");
+        assert_eq!(extract_container_id(&content), Some(id.to_string()));
+    }
+
+    #[test]
+    fn test_extract_container_id_host_process() {
+        let content = "0::/user.slice/user-1000.slice/session-1.scope\n";
+        assert_eq!(extract_container_id(content), None);
+    }
+
+    #[test]
+    fn test_extract_container_id_kubernetes() {
+        let id = "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890";
+        let content = format!("0::/kubepods/burstable/podabc123/docker-{id}.scope\n");
+        assert_eq!(extract_container_id(&content), Some(id.to_string()));
+    }
+
+    #[test]
+    fn test_extract_container_id_empty() {
+        assert_eq!(extract_container_id(""), None);
     }
 }
