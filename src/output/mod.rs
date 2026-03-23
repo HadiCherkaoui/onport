@@ -24,6 +24,8 @@ pub enum OutputFormat {
 pub struct RenderOptions {
     /// Disable ANSI color codes in output.
     pub no_color: bool,
+    /// Disable process name truncation when rendering tables.
+    pub wide: bool,
 }
 
 /// Render port entries in the specified format.

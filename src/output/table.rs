@@ -45,7 +45,8 @@ pub fn render(entries: &[PortEntry], options: &RenderOptions) -> Result<()> {
         .map(|e| {
             let process_name = e.process_name.as_deref().unwrap_or("?");
             // Truncate process names to PROCESS_COL_WIDTH characters for alignment
-            let process_display = if process_name.chars().count() > super::PROCESS_COL_WIDTH {
+            // unless wide mode is enabled.
+            let process_display = if !options.wide && process_name.chars().count() > super::PROCESS_COL_WIDTH {
                 let truncate_at = process_name
                     .char_indices()
                     .nth(super::PROCESS_COL_WIDTH - 1)

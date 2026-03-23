@@ -182,3 +182,24 @@ fn sort_invalid_value_exits_nonzero() {
         .expect("failed to run onport");
     assert!(!output.status.success());
 }
+
+#[test]
+fn wide_flag_exits_zero() {
+    let output = onport()
+        .args(["--wide", "--json"])
+        .output()
+        .expect("failed to run onport");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert!(parsed.is_array());
+}
+
+#[test]
+fn wide_flag_table_exits_zero() {
+    let output = onport()
+        .arg("--wide")
+        .output()
+        .expect("failed to run onport");
+    assert!(output.status.success());
+}

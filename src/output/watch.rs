@@ -85,6 +85,8 @@ pub struct WatchOptions<'a> {
     pub ipv6_only: bool,
     /// Field to sort entries by in each refresh cycle.
     pub sort_field: &'a crate::SortField,
+    /// Disable process name truncation in watch mode rows.
+    pub wide: bool,
 }
 
 /// Run the live-updating watch loop.
@@ -202,8 +204,21 @@ pub fn run_watch(provider: &dyn PlatformProvider, opts: &WatchOptions<'_>) -> Re
         }
         println!();
 
+        // Compute max process name width for column alignment
+        let name_width = if opts.wide {
+            display_entries
+                .iter()
+                .filter_map(|e| e.process_name.as_deref())
+                .map(|n| n.chars().count())
+                .max()
+                .unwrap_or(super::PROCESS_COL_WIDTH)
+                .max(super::PROCESS_COL_WIDTH)
+        } else {
+            super::PROCESS_COL_WIDTH
+        };
+
         // Column header
-        print_column_header(opts.no_color);
+        print_column_header(opts.no_color, name_width);
 
         // Current entries
         for entry in &display_entries {
@@ -213,7 +228,7 @@ pub fn run_watch(provider: &dyn PlatformProvider, opts: &WatchOptions<'_>) -> Re
             } else {
                 RowHighlight::Normal
             };
-            print_row(entry, highlight, opts.no_color);
+            print_row(entry, highlight, opts.no_color, opts.wide, name_width);
         }
 
         // Gone entries (shown for one cycle in red)
@@ -224,8 +239,8 @@ pub fn run_watch(provider: &dyn PlatformProvider, opts: &WatchOptions<'_>) -> Re
         for (port, addr) in gone_sorted {
             let addr_str = super::format_address(&addr);
             let row = format!(
-                "  {:>5}  {:<4}  {:<16}  {:<16}  {:>6}  {:<10}  {}", // PROCESS_COL_WIDTH chars
-                port, "—", addr_str, "—", "—", "—", "GONE"
+                "  {:>5}  {:<4}  {:<16}  {:<name_width$}  {:>6}  {:<10}  {}",
+                port, "—", addr_str, "—", "—", "—", "GONE", name_width = name_width
             );
             if opts.no_color {
                 println!("{row}");
@@ -271,20 +286,26 @@ enum RowHighlight {
 }
 
 /// Print the column header line followed by a separator.
-fn print_column_header(no_color: bool) {
+///
+/// `name_width` controls the width of the PROCESS column; in normal mode this
+/// equals `PROCESS_COL_WIDTH` (16); in wide mode it expands to the longest name.
+fn print_column_header(no_color: bool, name_width: usize) {
+    let process_col = format!("{:<name_width$}", "PROCESS", name_width = name_width);
     let header = format!(
-        "  {:<5}  {:<4}  {:<16}  {:<16}  {:<6}  {:<10}  {}", // PROCESS_COL_WIDTH chars
-        "PORT", "PROTO", "ADDRESS", "PROCESS", "PID", "USER", "STATE"
+        "  {:<5}  {:<4}  {:<16}  {}  {:<6}  {:<10}  {}",
+        "PORT", "PROTO", "ADDRESS", process_col, "PID", "USER", "STATE"
     );
-    let sep =
-        "  \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}  \u{2500}\u{2500}\u{2500}\u{2500}  \
-         \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\
-         \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}  \
-         \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\
-         \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}  \
-         \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}  \
-         \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}  \
-         \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}";
+    // Build the separator with the correct number of dashes for each column.
+    let sep = format!(
+        "  {dashes5}  {dashes4}  {addr}  {proc}  {pid}  {user}  {state}",
+        dashes5 = "\u{2500}".repeat(5),
+        dashes4 = "\u{2500}".repeat(4),
+        addr    = "\u{2500}".repeat(16),
+        proc    = "\u{2500}".repeat(name_width),
+        pid     = "\u{2500}".repeat(6),
+        user    = "\u{2500}".repeat(10),
+        state   = "\u{2500}".repeat(5),
+    );
 
     if no_color {
         println!("{header}");
@@ -296,9 +317,19 @@ fn print_column_header(no_color: bool) {
 }
 
 /// Print a single port-entry row, applying highlight color when appropriate.
-fn print_row(entry: &crate::types::PortEntry, highlight: RowHighlight, no_color: bool) {
+///
+/// `wide` disables process name truncation; `name_width` is the column width
+/// for the PROCESS column (equal to `PROCESS_COL_WIDTH` in normal mode, or the
+/// maximum name length in wide mode).
+fn print_row(
+    entry: &crate::types::PortEntry,
+    highlight: RowHighlight,
+    no_color: bool,
+    wide: bool,
+    name_width: usize,
+) {
     let process_name = entry.process_name.as_deref().unwrap_or("?");
-    let process_display = if process_name.chars().count() > super::PROCESS_COL_WIDTH {
+    let process_display = if !wide && process_name.chars().count() > super::PROCESS_COL_WIDTH {
         let truncate_at = process_name
             .char_indices()
             .nth(super::PROCESS_COL_WIDTH - 1)
@@ -322,12 +353,13 @@ fn print_row(entry: &crate::types::PortEntry, highlight: RowHighlight, no_color:
         .map(|name| format!("  [docker: {name}]"))
         .unwrap_or_default();
 
+    let process_col = format!("{:<name_width$}", process_display, name_width = name_width);
     let row = format!(
-        "  {:>5}  {:<4}  {:<16}  {:<16}  {:>6}  {:<10}  {}{}", // PROCESS_COL_WIDTH chars
+        "  {:>5}  {:<4}  {:<16}  {}  {:>6}  {:<10}  {}{}",
         entry.port,
         entry.protocol,
         addr_str,
-        process_display,
+        process_col,
         pid_str,
         user_str,
         state_str,

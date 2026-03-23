@@ -99,6 +99,10 @@ struct Cli {
     #[arg(long = "sort", value_enum, default_value_t = SortField::Port)]
     sort: SortField,
 
+    /// Disable process name truncation.
+    #[arg(short = 'W', long = "wide")]
+    wide: bool,
+
     /// Live-updating watch mode (refresh every 2s).
     #[arg(short = 'w', long = "watch", conflicts_with_all = ["kill", "json"])]
     watch: bool,
@@ -137,6 +141,7 @@ fn main() -> Result<()> {
             ipv4_only: cli.ipv4 && !cli.ipv6,
             ipv6_only: cli.ipv6 && !cli.ipv4,
             sort_field: &cli.sort,
+            wide: cli.wide,
         };
         return output::watch::run_watch(provider.as_ref(), &opts);
     }
@@ -205,7 +210,7 @@ fn main() -> Result<()> {
         // spawning separate IPv4/IPv6 listeners). Reject only when genuinely different
         // processes would be affected.
         if !is_single_process(&entries) {
-            output::render(&entries, &OutputFormat::Table, &output::RenderOptions { no_color: cli.no_color })?;
+            output::render(&entries, &OutputFormat::Table, &output::RenderOptions { no_color: cli.no_color, wide: cli.wide })?;
             eprintln!("Multiple different processes found. Specify a single port.");
             return Ok(());
         }
@@ -224,7 +229,7 @@ fn main() -> Result<()> {
     let mut display_entries = entries.clone();
     dedup_same_service(&mut display_entries);
 
-    output::render(&display_entries, &format, &output::RenderOptions { no_color: cli.no_color })?;
+    output::render(&display_entries, &format, &output::RenderOptions { no_color: cli.no_color, wide: cli.wide })?;
 
     // Enhanced single-port view: show process details and offer an inline kill prompt
     // when exactly one port is queried, a single process matched, and we are in a TTY.
