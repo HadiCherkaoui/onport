@@ -14,10 +14,12 @@
 - **Watch mode**: Live-updating display with new/gone highlighting
 - **Kill mode**: Kill a process by port with a single command
 - **Single-port detail view**: Full command line, start time, open FDs, process tree
-- **Service names**: Well-known ports (ssh, http, https, postgres, redis, etc.) shown in SERVICE column
-- **Filtering**: Filter by process name, PID, or IP version (IPv4/IPv6)
+- **Service names**: Well-known ports (ssh, http, https, postgres, redis, etc.) shown in SERVICE column and in JSON output
+- **REMOTE column**: Remote address visible in both table and watch mode
+- **Filtering**: Filter by process name, username, PID, or IP version (IPv4/IPv6)
 - **Sorting**: Sort output by port, PID, name, user, state, or protocol
 - **Wide mode**: Show full untruncated process names
+- **Watch interval**: Control watch refresh rate with `--interval`
 - **Shell completions**: Generate completions for bash, zsh, fish, and PowerShell
 - **Graceful degradation**: Missing info shows `?`, never crashes
 
@@ -81,9 +83,17 @@ onport --watch
 onport -w
 onport -w 3000
 
+# Watch mode with custom refresh interval (seconds, minimum 0.5)
+onport -w --interval 1.0
+onport -w -i 5
+
 # Filter by process name (case-insensitive substring)
 onport --name nginx
 onport -n node
+
+# Filter by username (case-insensitive substring)
+onport --user root
+onport -u SYSTEM
 
 # Filter by PID
 onport --pid 1234
@@ -127,7 +137,9 @@ onport --completions powershell > $PROFILE.CurrentUserAllHosts
 | `--force` | `-f` | Force kill without confirmation (with --kill) |
 | `--signal <SIG>` | | Signal to send: name (HUP, TERM, KILL) or number (9). Only with --kill |
 | `--watch` | `-w` | Live-updating watch mode (press q to quit) |
+| `--interval <SECS>` | `-i` | Refresh interval for watch mode in seconds (default: 2.0, minimum: 0.5) |
 | `--name <NAME>` | `-n` | Filter by process name (case-insensitive substring) |
+| `--user <USER>` | `-u` | Filter by username (case-insensitive substring) |
 | `--pid <PID>` | | Filter by PID |
 | `--ipv4` | `-4` | Show only IPv4 sockets |
 | `--ipv6` | `-6` | Show only IPv6 sockets |
@@ -140,19 +152,19 @@ onport --completions powershell > $PROFILE.CurrentUserAllHosts
 Standard listing:
 
 ```
- PORT   SERVICE    PROTO  ADDRESS          PROCESS          PID    USER       STATE
-   22   ssh        tcp    *                sshd             1204   root       LISTEN
-   80   http       tcp    *                nginx           14201   www        LISTEN
- 3000   —          tcp    *                node            14523   hadi       LISTEN
- 5432   postgres   tcp    *                postgres         9102   postgres   LISTEN  [docker: my-postgres]
- 8080   http-alt   tcp    127.0.0.1        traefik          8832   root       LISTEN  [docker: traefik]
+ PORT   SERVICE    PROTO  ADDRESS          PROCESS          PID    USER       STATE        REMOTE
+   22   ssh        tcp    *                sshd             1204   root       LISTEN       —
+   80   http       tcp    *                nginx           14201   www        LISTEN       —
+ 3000   —          tcp    *                node            14523   hadi       LISTEN       —
+ 5432   postgres   tcp    *                postgres         9102   postgres   LISTEN       —       [docker: my-postgres]
+ 8080   http-alt   tcp    127.0.0.1        traefik          8832   root       LISTEN       —       [docker: traefik]
 ```
 
 Single-port detail view (`onport 5432`):
 
 ```
- PORT   SERVICE    PROTO  ADDRESS          PROCESS          PID    USER       STATE
- 5432   postgres   tcp    *                postgres         9102   postgres   LISTEN  [docker: my-postgres]
+ PORT   SERVICE    PROTO  ADDRESS          PROCESS          PID    USER       STATE        REMOTE
+ 5432   postgres   tcp    *                postgres         9102   postgres   LISTEN       —       [docker: my-postgres]
 
   Command:    postgres -D /var/lib/postgresql/data
   Started:    3h 22m ago
@@ -198,6 +210,7 @@ Ports without a standard name show `—`.
 | All connections | `onport --all` | `lsof -i` | `ss -tanp` | `netstat -tanp` |
 | Live watch | `onport -w` | N/A | N/A | N/A |
 | Filter by name | `onport -n nginx` | N/A | N/A | N/A |
+| Filter by user | `onport -u root` | N/A | N/A | N/A |
 | Sort by field | `onport --sort name` | N/A | N/A | N/A |
 
 ## License

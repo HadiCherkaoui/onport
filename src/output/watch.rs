@@ -77,6 +77,8 @@ pub struct WatchOptions<'a> {
     pub no_docker: bool,
     /// Case-insensitive substring filter applied to process names.
     pub name_filter: Option<&'a str>,
+    /// Case-insensitive substring filter applied to usernames.
+    pub user_filter: Option<&'a str>,
     /// Restrict display to a single PID.
     pub pid_filter: Option<u32>,
     /// Show only IPv4 sockets.
@@ -87,6 +89,8 @@ pub struct WatchOptions<'a> {
     pub sort_field: &'a crate::SortField,
     /// Disable process name truncation in watch mode rows.
     pub wide: bool,
+    /// Refresh interval in milliseconds for the watch loop.
+    pub interval_ms: u64,
 }
 
 /// Run the live-updating watch loop.
@@ -131,6 +135,15 @@ pub fn run_watch(provider: &dyn PlatformProvider, opts: &WatchOptions<'_>) -> Re
                 e.process_name
                     .as_deref()
                     .is_some_and(|n| n.to_lowercase().contains(&lower))
+            });
+        }
+
+        if let Some(user_filter) = opts.user_filter {
+            let lower = user_filter.to_lowercase();
+            entries.retain(|e| {
+                e.user
+                    .as_deref()
+                    .is_some_and(|u| u.to_lowercase().contains(&lower))
             });
         }
 
@@ -194,8 +207,9 @@ pub fn run_watch(provider: &dyn PlatformProvider, opts: &WatchOptions<'_>) -> Re
         )?;
 
         // Header
+        let interval_secs = opts.interval_ms as f64 / 1000.0;
         let header_line = format!(
-            "onport watch \u{2014} press q to quit  (last updated: {now})"
+            "onport watch ({interval_secs:.1}s) \u{2014} press q to quit  (last updated: {now})"
         );
         if opts.no_color {
             println!("{header_line}");
@@ -239,8 +253,8 @@ pub fn run_watch(provider: &dyn PlatformProvider, opts: &WatchOptions<'_>) -> Re
         for (port, addr) in gone_sorted {
             let addr_str = super::format_address(&addr);
             let row = format!(
-                "  {:>5}  {:<12}  {:<4}  {:<16}  {:<name_width$}  {:>6}  {:<10}  {}",
-                port, "—", "—", addr_str, "—", "—", "—", "GONE",
+                "  {:>5}  {:<12}  {:<4}  {:<16}  {:<name_width$}  {:>6}  {:<10}  {:<11}  {}",
+                port, "—", "—", addr_str, "—", "—", "—", "GONE", "—",
                 name_width = name_width,
             );
             if opts.no_color {
@@ -255,8 +269,8 @@ pub fn run_watch(provider: &dyn PlatformProvider, opts: &WatchOptions<'_>) -> Re
         // ── 4. Update snapshot ────────────────────────────────────────────────
         prev_keys = curr_keys;
 
-        // ── 5. Poll for quit key (2-second timeout) ───────────────────────────
-        if event::poll(Duration::from_millis(2000))?
+        // ── 5. Poll for quit key (interval timeout) ──────────────────────────
+        if event::poll(Duration::from_millis(opts.interval_ms))?
             && let Event::Key(key) = event::read()?
         {
             match key.code {
@@ -292,13 +306,13 @@ enum RowHighlight {
 /// equals `PROCESS_COL_WIDTH` (16); in wide mode it expands to the longest name.
 fn print_column_header(no_color: bool, name_width: usize) {
     let header = format!(
-        "  {:>5}  {:<12}  {:<4}  {:<16}  {:<name_width$}  {:>6}  {:<10}  {}",
-        "PORT", "SERVICE", "PROTO", "ADDRESS", "PROCESS", "PID", "USER", "STATE",
+        "  {:>5}  {:<12}  {:<4}  {:<16}  {:<name_width$}  {:>6}  {:<10}  {:<11}  {}",
+        "PORT", "SERVICE", "PROTO", "ADDRESS", "PROCESS", "PID", "USER", "STATE", "REMOTE",
         name_width = name_width
     );
     // Build the separator with the correct number of dashes for each column.
     let sep = format!(
-        "  {dashes5}  {service}  {dashes4}  {addr}  {proc}  {pid}  {user}  {state}",
+        "  {dashes5}  {service}  {dashes4}  {addr}  {proc}  {pid}  {user}  {state}  {remote}",
         dashes5  = "\u{2500}".repeat(5),
         service  = "\u{2500}".repeat(12),
         dashes4  = "\u{2500}".repeat(4),
@@ -306,7 +320,8 @@ fn print_column_header(no_color: bool, name_width: usize) {
         proc     = "\u{2500}".repeat(name_width),
         pid      = "\u{2500}".repeat(6),
         user     = "\u{2500}".repeat(10),
-        state    = "\u{2500}".repeat(5),
+        state    = "\u{2500}".repeat(11),
+        remote   = "\u{2500}".repeat(6),
     );
 
     if no_color {
@@ -356,8 +371,12 @@ fn print_row(
         .unwrap_or_default();
 
     let service_str = crate::services::lookup(entry.port).unwrap_or("—");
+    let remote_str = entry
+        .remote_addr
+        .map(|sa| sa.to_string())
+        .unwrap_or_else(|| "—".to_string());
     let row = format!(
-        "  {:>5}  {:<12}  {:<4}  {:<16}  {:<name_width$}  {:>6}  {:<10}  {}{}",
+        "  {:>5}  {:<12}  {:<4}  {:<16}  {:<name_width$}  {:>6}  {:<10}  {:<11}  {}{}",
         entry.port,
         service_str,
         entry.protocol,
@@ -366,6 +385,7 @@ fn print_row(
         pid_str,
         user_str,
         state_str,
+        remote_str,
         docker_suffix,
         name_width = name_width,
     );

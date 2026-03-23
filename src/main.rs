@@ -92,6 +92,10 @@ struct Cli {
     #[arg(short = 'n', long = "name")]
     name: Option<String>,
 
+    /// Filter by username (case-insensitive substring match).
+    #[arg(short = 'u', long = "user")]
+    user: Option<String>,
+
     /// Filter by PID.
     #[arg(long = "pid")]
     pid: Option<u32>,
@@ -112,9 +116,13 @@ struct Cli {
     #[arg(short = 'W', long = "wide")]
     wide: bool,
 
-    /// Live-updating watch mode (refresh every 2s).
+    /// Live-updating watch mode. Use --interval to set refresh rate.
     #[arg(short = 'w', long = "watch", conflicts_with_all = ["kill", "json"])]
     watch: bool,
+
+    /// Refresh interval for watch mode in seconds (default: 2.0, minimum: 0.5).
+    #[arg(short = 'i', long = "interval", default_value_t = 2.0)]
+    interval: f64,
 }
 
 fn main() -> Result<()> {
@@ -139,6 +147,12 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
+    // Minimum refresh interval: 0.5 s prevents CPU spin while still feeling responsive.
+    if cli.interval < 0.5 {
+        eprintln!("Error: --interval must be at least 0.5 seconds.");
+        return Ok(());
+    }
+
     let provider = platform::get_provider();
 
     // Watch mode — enter the live-update loop and return when the user quits.
@@ -157,11 +171,13 @@ fn main() -> Result<()> {
             no_color: cli.no_color,
             no_docker: cli.no_docker,
             name_filter: cli.name.as_deref(),
+            user_filter: cli.user.as_deref(),
             pid_filter: cli.pid,
             ipv4_only: cli.ipv4 && !cli.ipv6,
             ipv6_only: cli.ipv6 && !cli.ipv4,
             sort_field: &cli.sort,
             wide: cli.wide,
+            interval_ms: (cli.interval * 1000.0) as u64,
         };
         return output::watch::run_watch(provider.as_ref(), &opts);
     }
@@ -194,6 +210,16 @@ fn main() -> Result<()> {
             e.process_name
                 .as_deref()
                 .is_some_and(|n| n.to_lowercase().contains(&lower))
+        });
+    }
+
+    // Filter by username (case-insensitive substring)
+    if let Some(ref user_filter) = cli.user {
+        let lower = user_filter.to_lowercase();
+        entries.retain(|e| {
+            e.user
+                .as_deref()
+                .is_some_and(|u| u.to_lowercase().contains(&lower))
         });
     }
 
@@ -692,6 +718,51 @@ mod tests {
         ];
         let pid_filter: u32 = 9999;
         entries.retain(|e| e.pid == Some(pid_filter));
+        assert!(entries.is_empty());
+    }
+
+    // ── User filter tests ─────────────────────────────────────────────────────
+
+    fn make_user_entry(port: u16, user: &str) -> crate::types::PortEntry {
+        use std::net::{IpAddr, Ipv4Addr};
+        use crate::types::{PortEntry, Protocol, SocketState};
+        PortEntry {
+            port,
+            protocol: Protocol::Tcp,
+            state: SocketState::Listen,
+            pid: Some(100),
+            process_name: Some("nginx".to_string()),
+            user: Some(user.to_string()),
+            local_addr: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+            remote_addr: None,
+            docker_container: None,
+        }
+    }
+
+    #[test]
+    fn test_user_filter_case_insensitive() {
+        let mut entries = vec![
+            make_user_entry(80, "root"),
+            make_user_entry(5432, "Postgres"),
+        ];
+        let lower = "ROOT".to_lowercase();
+        entries.retain(|e| {
+            e.user.as_deref().is_some_and(|u| u.to_lowercase().contains(&lower))
+        });
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].user.as_deref(), Some("root"));
+    }
+
+    #[test]
+    fn test_user_filter_no_match() {
+        let mut entries = vec![
+            make_user_entry(80, "root"),
+            make_user_entry(5432, "postgres"),
+        ];
+        let lower = "nonexistent".to_lowercase();
+        entries.retain(|e| {
+            e.user.as_deref().is_some_and(|u| u.to_lowercase().contains(&lower))
+        });
         assert!(entries.is_empty());
     }
 

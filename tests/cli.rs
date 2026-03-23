@@ -266,3 +266,79 @@ fn completions_powershell_exits_zero() {
     assert!(output.status.success());
     assert!(!output.stdout.is_empty(), "powershell completions should produce output");
 }
+
+// ── --user filter tests ───────────────────────────────────────────────────────
+
+#[test]
+fn user_filter_nonexistent_returns_empty_json() {
+    let output = onport()
+        .args(["--user", "nonexistent_user_xyzzy", "--json"])
+        .output()
+        .expect("failed to run onport");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert!(parsed.as_array().unwrap().is_empty());
+}
+
+#[test]
+fn help_mentions_user() {
+    let output = onport().arg("--help").output().expect("failed to run onport");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("--user"), "help should mention --user");
+}
+
+// ── --interval tests ──────────────────────────────────────────────────────────
+
+#[test]
+fn interval_too_small_exits_error() {
+    let output = onport()
+        .args(["--watch", "--interval", "0.1"])
+        .output()
+        .expect("failed to run onport");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("0.5 seconds"),
+        "expected '0.5 seconds' in stderr, got: {stderr}"
+    );
+}
+
+#[test]
+fn help_mentions_interval() {
+    let output = onport().arg("--help").output().expect("failed to run onport");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("--interval"), "help should mention --interval");
+}
+
+// ── JSON output parity tests ──────────────────────────────────────────────────
+
+#[test]
+fn json_output_has_service_field() {
+    let output = onport().arg("--json").output().expect("failed to run onport");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    let arr = parsed.as_array().expect("JSON array");
+    for entry in arr {
+        assert!(
+            entry.get("service").is_some(),
+            "each JSON entry must have a 'service' key, got: {entry}"
+        );
+    }
+}
+
+// ── Table output parity tests ─────────────────────────────────────────────────
+
+#[test]
+fn table_output_has_remote_header() {
+    let output = onport().output().expect("failed to run onport");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Only check the REMOTE header when entries are present; an empty table
+    // prints "No matching sockets found." without any column headers.
+    if !stdout.contains("No matching sockets found.") {
+        assert!(stdout.contains("REMOTE"), "table output should contain REMOTE header");
+    }
+}

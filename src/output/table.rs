@@ -29,6 +29,8 @@ struct TableRow {
     user: String,
     #[tabled(rename = "STATE")]
     state: String,
+    #[tabled(rename = "REMOTE")]
+    remote: String,
 }
 
 /// Render port entries as a colored, aligned table.
@@ -81,6 +83,7 @@ pub fn render(entries: &[PortEntry], options: &RenderOptions) -> Result<()> {
                 pid: e.pid.map_or_else(|| "?".to_string(), |p| p.to_string()),
                 user: e.user.clone().unwrap_or_else(|| "?".to_string()),
                 state: format!("{state_display}{docker_suffix}"),
+                remote: e.remote_addr.map(|sa| sa.to_string()).unwrap_or_else(|| "—".to_string()),
             }
         })
         .collect();
