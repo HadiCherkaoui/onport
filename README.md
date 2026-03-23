@@ -14,6 +14,11 @@
 - **Watch mode**: Live-updating display with new/gone highlighting
 - **Kill mode**: Kill a process by port with a single command
 - **Single-port detail view**: Full command line, start time, open FDs, process tree
+- **Service names**: Well-known ports (ssh, http, https, postgres, redis, etc.) shown in SERVICE column
+- **Filtering**: Filter by process name, PID, or IP version (IPv4/IPv6)
+- **Sorting**: Sort output by port, PID, name, user, state, or protocol
+- **Wide mode**: Show full untruncated process names
+- **Shell completions**: Generate completions for bash, zsh, fish, and PowerShell
 - **Graceful degradation**: Missing info shows `?`, never crashes
 
 ## Installation
@@ -67,30 +72,87 @@ onport -k 3000
 onport --kill --force 3000
 onport -k -f 3000
 
+# Send a specific signal when killing
+onport -k --signal HUP 8080
+onport -k --signal 9 3000
+
 # Live-updating watch mode (press q to quit)
 onport --watch
 onport -w
 onport -w 3000
+
+# Filter by process name (case-insensitive substring)
+onport --name nginx
+onport -n node
+
+# Filter by PID
+onport --pid 1234
+
+# Show only IPv4 or IPv6 sockets
+onport --ipv4
+onport -4
+onport --ipv6
+onport -6
+
+# Sort results
+onport --sort name         # sort by process name
+onport --sort pid          # sort by PID
+onport --sort user         # sort by username
+onport --sort state        # sort by socket state
+onport --sort proto        # sort by protocol
+onport --sort port         # sort by port number (default)
+
+# Show full process names without truncation
+onport --wide
+onport -W
+
+# Generate shell completions
+onport --completions bash > ~/.bash_completion.d/onport
+onport --completions zsh > ~/.zsh/completions/_onport
+onport --completions fish > ~/.config/fish/completions/onport.fish
+onport --completions powershell > $PROFILE.CurrentUserAllHosts
 ```
+
+## Options
+
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--tcp` | | Show only TCP sockets |
+| `--udp` | | Show only UDP sockets |
+| `--all` | | Show all socket states, not just LISTEN |
+| `--json` | | Output as JSON for scripting |
+| `--no-color` | | Disable colored output |
+| `--no-docker` | | Disable Docker container name detection |
+| `--kill` | `-k` | Kill the process on the specified port |
+| `--force` | `-f` | Force kill without confirmation (with --kill) |
+| `--signal <SIG>` | | Signal to send: name (HUP, TERM, KILL) or number (9). Only with --kill |
+| `--watch` | `-w` | Live-updating watch mode (press q to quit) |
+| `--name <NAME>` | `-n` | Filter by process name (case-insensitive substring) |
+| `--pid <PID>` | | Filter by PID |
+| `--ipv4` | `-4` | Show only IPv4 sockets |
+| `--ipv6` | `-6` | Show only IPv6 sockets |
+| `--sort <FIELD>` | | Sort by: `port` (default), `pid`, `name`, `user`, `state`, `proto` |
+| `--wide` | `-W` | Disable process name truncation (show full names) |
+| `--completions <SHELL>` | | Generate shell completions: `bash`, `zsh`, `fish`, `powershell`, `elvish` |
 
 ## Example Output
 
 Standard listing:
 
 ```
- PORT   PROTO  ADDRESS          PROCESS          PID    USER       STATE
-   22   tcp    *                sshd             1204   root       LISTEN
-   80   tcp    *                nginx           14201   www        LISTEN
- 3000   tcp    *                node            14523   hadi       LISTEN
- 5432   tcp    *                postgres         9102   postgres   LISTEN  [docker: my-postgres]
- 8080   tcp    127.0.0.1        traefik          8832   root       LISTEN  [docker: traefik]
+ PORT   SERVICE    PROTO  ADDRESS          PROCESS          PID    USER       STATE
+   22   ssh        tcp    *                sshd             1204   root       LISTEN
+   80   http       tcp    *                nginx           14201   www        LISTEN
+ 3000   —          tcp    *                node            14523   hadi       LISTEN
+ 5432   postgres   tcp    *                postgres         9102   postgres   LISTEN  [docker: my-postgres]
+ 8080   http-alt   tcp    127.0.0.1        traefik          8832   root       LISTEN  [docker: traefik]
 ```
 
 Single-port detail view (`onport 5432`):
 
 ```
- PORT   PROTO  ADDRESS          PROCESS          PID    USER       STATE
- 5432   tcp    *                postgres         9102   postgres   LISTEN  [docker: my-postgres]
+ PORT   SERVICE    PROTO  ADDRESS          PROCESS          PID    USER       STATE
+ 5432   postgres   tcp    *                postgres         9102   postgres   LISTEN  [docker: my-postgres]
 
   Command:    postgres -D /var/lib/postgresql/data
   Started:    3h 22m ago
@@ -99,6 +161,31 @@ Single-port detail view (`onport 5432`):
 
   Kill this process? [y/N]
 ```
+
+Filtered by name (`onport --name nginx --sort port`):
+
+```
+ PORT   SERVICE    PROTO  ADDRESS   PROCESS   PID    USER   STATE
+   80   http       tcp    *         nginx      8801   www    LISTEN
+  443   https      tcp    *         nginx      8801   www    LISTEN
+```
+
+## Well-Known Service Names
+
+The SERVICE column shows standard names for common ports:
+
+| Port | Service | Port | Service |
+|------|---------|------|---------|
+| 22 | ssh | 3306 | mysql |
+| 25 | smtp | 3389 | rdp |
+| 53 | dns | 5432 | postgres |
+| 80 | http | 5672 | amqp |
+| 443 | https | 6379 | redis |
+| 1433 | mssql | 8080 | http-alt |
+| 2049 | nfs | 9200 | elastic |
+| 27017 | mongodb | 6443 | kube-api |
+
+Ports without a standard name show `—`.
 
 ## Comparison
 
@@ -110,6 +197,8 @@ Single-port detail view (`onport 5432`):
 | JSON output | `onport --json` | N/A | `ss -tlnp -H -O` | N/A |
 | All connections | `onport --all` | `lsof -i` | `ss -tanp` | `netstat -tanp` |
 | Live watch | `onport -w` | N/A | N/A | N/A |
+| Filter by name | `onport -n nginx` | N/A | N/A | N/A |
+| Sort by field | `onport --sort name` | N/A | N/A | N/A |
 
 ## License
 
