@@ -22,6 +22,24 @@ use output::OutputFormat;
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
+/// Field to sort port entries by.
+#[derive(Clone, Default, clap::ValueEnum)]
+pub(crate) enum SortField {
+    /// Sort by port number (default).
+    #[default]
+    Port,
+    /// Sort by PID.
+    Pid,
+    /// Sort by process name (case-insensitive).
+    Name,
+    /// Sort by username.
+    User,
+    /// Sort by socket state.
+    State,
+    /// Sort by protocol.
+    Proto,
+}
+
 /// See what's listening on your ports.
 #[derive(Parser)]
 #[command(name = "onport", version, about)]
@@ -77,6 +95,10 @@ struct Cli {
     #[arg(short = '6', long = "ipv6")]
     ipv6: bool,
 
+    /// Field to sort results by.
+    #[arg(long = "sort", value_enum, default_value_t = SortField::Port)]
+    sort: SortField,
+
     /// Live-updating watch mode (refresh every 2s).
     #[arg(short = 'w', long = "watch", conflicts_with_all = ["kill", "json"])]
     watch: bool,
@@ -114,6 +136,7 @@ fn main() -> Result<()> {
             pid_filter: cli.pid,
             ipv4_only: cli.ipv4 && !cli.ipv6,
             ipv6_only: cli.ipv6 && !cli.ipv4,
+            sort_field: &cli.sort,
         };
         return output::watch::run_watch(provider.as_ref(), &opts);
     }
@@ -164,8 +187,8 @@ fn main() -> Result<()> {
     // Deduplicate wildcard IPv4/IPv6 entries that represent the same socket
     dedup_entries(&mut entries);
 
-    // Sort by port number
-    entries.sort_by_key(|e| e.port);
+    // Sort entries by the requested field.
+    apply_sort(&mut entries, &cli.sort);
 
     // Enrich entries with Docker container names where ports match.
     if !cli.no_docker {
@@ -235,6 +258,27 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Sort port entries by the given field.
+pub(crate) fn apply_sort(entries: &mut [crate::types::PortEntry], field: &SortField) {
+    match field {
+        SortField::Port  => entries.sort_by_key(|e| e.port),
+        SortField::Pid   => entries.sort_by_key(|e| e.pid.unwrap_or(0)),
+        SortField::Name  => entries.sort_by(|a, b| {
+            a.process_name.as_deref().unwrap_or("").to_lowercase()
+                .cmp(&b.process_name.as_deref().unwrap_or("").to_lowercase())
+        }),
+        SortField::User  => entries.sort_by(|a, b| {
+            a.user.as_deref().unwrap_or("").cmp(b.user.as_deref().unwrap_or(""))
+        }),
+        SortField::State => entries.sort_by(|a, b| {
+            a.state.to_string().cmp(&b.state.to_string())
+        }),
+        SortField::Proto => entries.sort_by(|a, b| {
+            a.protocol.to_string().cmp(&b.protocol.to_string())
+        }),
+    }
 }
 
 /// Return `true` when all entries share the same process name (one logical service).
@@ -660,5 +704,41 @@ mod tests {
         entries.retain(|e| e.local_addr.is_ipv6());
         assert_eq!(entries.len(), 1);
         assert!(entries[0].local_addr.is_ipv6());
+    }
+
+    #[test]
+    fn test_sort_by_pid() {
+        use crate::types::{PortEntry, Protocol, SocketState};
+        use std::net::{IpAddr, Ipv4Addr};
+
+        fn make_entry(port: u16, pid: u32) -> PortEntry {
+            PortEntry { port, protocol: Protocol::Tcp, state: SocketState::Listen,
+                        pid: Some(pid), process_name: None, user: None,
+                        local_addr: IpAddr::V4(Ipv4Addr::UNSPECIFIED), remote_addr: None, docker_container: None }
+        }
+
+        let mut entries = vec![make_entry(443, 200), make_entry(80, 100), make_entry(8080, 300)];
+        apply_sort(&mut entries, &SortField::Pid);
+        assert_eq!(entries[0].pid, Some(100));
+        assert_eq!(entries[1].pid, Some(200));
+        assert_eq!(entries[2].pid, Some(300));
+    }
+
+    #[test]
+    fn test_sort_by_name_case_insensitive() {
+        use crate::types::{PortEntry, Protocol, SocketState};
+        use std::net::{IpAddr, Ipv4Addr};
+
+        fn make_entry(port: u16, name: &str) -> PortEntry {
+            PortEntry { port, protocol: Protocol::Tcp, state: SocketState::Listen,
+                        pid: None, process_name: Some(name.to_string()), user: None,
+                        local_addr: IpAddr::V4(Ipv4Addr::UNSPECIFIED), remote_addr: None, docker_container: None }
+        }
+
+        let mut entries = vec![make_entry(80, "Zebra"), make_entry(443, "apple"), make_entry(8080, "Mango")];
+        apply_sort(&mut entries, &SortField::Name);
+        assert_eq!(entries[0].process_name.as_deref(), Some("apple"));
+        assert_eq!(entries[1].process_name.as_deref(), Some("Mango"));
+        assert_eq!(entries[2].process_name.as_deref(), Some("Zebra"));
     }
 }

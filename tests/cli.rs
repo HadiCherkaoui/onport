@@ -161,3 +161,24 @@ fn ipv6_flag_exits_zero() {
     let parsed: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert!(parsed.is_array());
 }
+
+#[test]
+fn sort_by_pid_exits_zero() {
+    let output = onport()
+        .args(["--sort", "pid", "--json"])
+        .output()
+        .expect("failed to run onport");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert!(parsed.is_array());
+}
+
+#[test]
+fn sort_invalid_value_exits_nonzero() {
+    let output = onport()
+        .args(["--sort", "invalid_sort_value"])
+        .output()
+        .expect("failed to run onport");
+    assert!(!output.status.success());
+}

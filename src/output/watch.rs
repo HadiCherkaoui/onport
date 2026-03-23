@@ -83,6 +83,8 @@ pub struct WatchOptions<'a> {
     pub ipv4_only: bool,
     /// Show only IPv6 sockets.
     pub ipv6_only: bool,
+    /// Field to sort entries by in each refresh cycle.
+    pub sort_field: &'a crate::SortField,
 }
 
 /// Run the live-updating watch loop.
@@ -144,7 +146,7 @@ pub fn run_watch(provider: &dyn PlatformProvider, opts: &WatchOptions<'_>) -> Re
         // Deduplicate wildcard IPv4/IPv6 entries that represent the same socket
         crate::dedup_entries(&mut entries);
 
-        entries.sort_by_key(|e| e.port);
+        crate::apply_sort(&mut entries, opts.sort_field);
 
         if !opts.no_docker {
             docker::enrich_with_docker(&mut entries);
