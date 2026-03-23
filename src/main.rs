@@ -11,7 +11,7 @@ mod types;
 use std::io::{IsTerminal, Write as _};
 
 use anyhow::{Context, Result};
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 use mimalloc::MiMalloc;
 
 use output::OutputFormat;
@@ -84,6 +84,10 @@ struct Cli {
     #[arg(long = "signal")]
     signal: Option<String>,
 
+    /// Generate shell completion script and exit. Supported: bash, zsh, fish, powershell, elvish.
+    #[arg(long = "completions", value_enum, exclusive = true)]
+    completions: Option<clap_complete::Shell>,
+
     /// Filter by process name (case-insensitive substring match).
     #[arg(short = 'n', long = "name")]
     name: Option<String>,
@@ -115,6 +119,11 @@ struct Cli {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+
+    if let Some(shell) = cli.completions {
+        clap_complete::generate(shell, &mut Cli::command(), "onport", &mut std::io::stdout());
+        return Ok(());
+    }
 
     let port_filters = parse_port_filters(&cli.ports)?;
 

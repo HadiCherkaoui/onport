@@ -226,3 +226,43 @@ fn help_mentions_signal() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("--signal"), "help should mention --signal");
 }
+
+#[test]
+fn completions_bash_exits_zero_with_output() {
+    let output = onport()
+        .args(["--completions", "bash"])
+        .output()
+        .expect("failed to run onport");
+    assert!(output.status.success());
+    assert!(!output.stdout.is_empty(), "bash completions should produce output");
+}
+
+#[test]
+fn completions_zsh_exits_zero() {
+    let output = onport()
+        .args(["--completions", "zsh"])
+        .output()
+        .expect("failed to run onport");
+    assert!(output.status.success());
+    assert!(!output.stdout.is_empty(), "zsh completions should produce output");
+}
+
+#[test]
+fn completions_fish_exits_zero() {
+    let output = onport()
+        .args(["--completions", "fish"])
+        .output()
+        .expect("failed to run onport");
+    assert!(output.status.success());
+    assert!(!output.stdout.is_empty(), "fish completions should produce output");
+}
+
+#[test]
+fn completions_powershell_exits_zero() {
+    let output = onport()
+        .args(["--completions", "powershell"])
+        .output()
+        .expect("failed to run onport");
+    assert!(output.status.success());
+    assert!(!output.stdout.is_empty(), "powershell completions should produce output");
+}
