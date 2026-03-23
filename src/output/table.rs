@@ -8,6 +8,8 @@ use tabled::{Table, Tabled};
 
 use crate::types::{PortEntry, SocketState};
 
+use super::RenderOptions;
+
 /// A single row in the output table.
 #[derive(Tabled)]
 struct TableRow {
@@ -32,7 +34,7 @@ struct TableRow {
 /// # Errors
 ///
 /// Returns an error if writing to stdout fails.
-pub fn render(entries: &[PortEntry], no_color: bool) -> Result<()> {
+pub fn render(entries: &[PortEntry], options: &RenderOptions) -> Result<()> {
     if entries.is_empty() {
         println!("No matching sockets found.");
         return Ok(());
@@ -42,11 +44,11 @@ pub fn render(entries: &[PortEntry], no_color: bool) -> Result<()> {
         .iter()
         .map(|e| {
             let process_name = e.process_name.as_deref().unwrap_or("?");
-            // Truncate process names to 16 characters for alignment
-            let process_display = if process_name.chars().count() > 16 {
+            // Truncate process names to PROCESS_COL_WIDTH characters for alignment
+            let process_display = if process_name.chars().count() > super::PROCESS_COL_WIDTH {
                 let truncate_at = process_name
                     .char_indices()
-                    .nth(15)
+                    .nth(super::PROCESS_COL_WIDTH - 1)
                     .map(|(i, _)| i)
                     .unwrap_or(process_name.len());
                 format!("{}…", &process_name[..truncate_at])
@@ -55,7 +57,7 @@ pub fn render(entries: &[PortEntry], no_color: bool) -> Result<()> {
             };
 
             let state_str = e.state.to_string();
-            let state_display = if no_color {
+            let state_display = if options.no_color {
                 state_str
             } else {
                 colorize_state(&e.state)

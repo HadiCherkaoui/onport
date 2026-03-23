@@ -113,3 +113,27 @@ fn mixed_range_and_single_port_exits_zero() {
         serde_json::from_str(&stdout).expect("--json output should be valid JSON");
     assert!(parsed.is_array());
 }
+
+#[test]
+fn name_filter_nonexistent_returns_empty_json() {
+    let output = onport()
+        .args(["--name", "nonexistent_process_xyzzy", "--json"])
+        .output()
+        .expect("failed to run onport");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert!(parsed.as_array().unwrap().is_empty());
+}
+
+#[test]
+fn pid_filter_nonexistent_returns_empty_json() {
+    let output = onport()
+        .args(["--pid", "99999", "--json"])
+        .output()
+        .expect("failed to run onport");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert!(parsed.as_array().unwrap().is_empty());
+}

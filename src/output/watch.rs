@@ -63,6 +63,24 @@ impl Drop for TerminalGuard {
 // Public API
 // ──────────────────────────────────────────────────────────────────────────────
 
+/// Options that control the watch-mode loop and its filtering behaviour.
+pub struct WatchOptions<'a> {
+    /// Port numbers to restrict the display to (empty = show all ports).
+    pub port_filters: &'a [u16],
+    /// Optional protocol restriction (TCP-only or UDP-only).
+    pub protocol_filter: Option<crate::types::Protocol>,
+    /// When `true`, display all socket states instead of only LISTEN.
+    pub show_all_states: bool,
+    /// Disable ANSI color codes in output.
+    pub no_color: bool,
+    /// Skip Docker container name enrichment.
+    pub no_docker: bool,
+    /// Case-insensitive substring filter applied to process names.
+    pub name_filter: Option<&'a str>,
+    /// Restrict display to a single PID.
+    pub pid_filter: Option<u32>,
+}
+
 /// Run the live-updating watch loop.
 ///
 /// Queries the platform provider every two seconds, applies the same filtering
@@ -75,14 +93,7 @@ impl Drop for TerminalGuard {
 ///
 /// Returns an error if socket enumeration fails on the first query, or if
 /// writing to the terminal fails.
-pub fn run_watch(
-    provider: &dyn PlatformProvider,
-    port_filters: &[u16],
-    protocol_filter: Option<Protocol>,
-    show_all_states: bool,
-    no_color: bool,
-    no_docker: bool,
-) -> Result<()> {
+pub fn run_watch(provider: &dyn PlatformProvider, opts: &WatchOptions<'_>) -> Result<()> {
     let _guard = TerminalGuard::enter()?;
 
     // Previous snapshot: (port, local_addr) pairs seen in the last cycle.
@@ -92,18 +103,31 @@ pub fn run_watch(
         // ── 1. Collect & filter ──────────────────────────────────────────────
         let mut entries = provider.list_sockets()?;
 
-        if !port_filters.is_empty() {
-            entries.retain(|e| port_filters.contains(&e.port));
+        if !opts.port_filters.is_empty() {
+            entries.retain(|e| opts.port_filters.contains(&e.port));
         }
 
-        match &protocol_filter {
+        match &opts.protocol_filter {
             Some(Protocol::Tcp) => entries.retain(|e| e.protocol == Protocol::Tcp),
             Some(Protocol::Udp) => entries.retain(|e| e.protocol == Protocol::Udp),
             None => {}
         }
 
-        if !show_all_states {
+        if !opts.show_all_states {
             entries.retain(|e| e.state == SocketState::Listen);
+        }
+
+        if let Some(name_filter) = opts.name_filter {
+            let lower = name_filter.to_lowercase();
+            entries.retain(|e| {
+                e.process_name
+                    .as_deref()
+                    .is_some_and(|n| n.to_lowercase().contains(&lower))
+            });
+        }
+
+        if let Some(pid_filter) = opts.pid_filter {
+            entries.retain(|e| e.pid == Some(pid_filter));
         }
 
         // Deduplicate wildcard IPv4/IPv6 entries that represent the same socket
@@ -111,7 +135,7 @@ pub fn run_watch(
 
         entries.sort_by_key(|e| e.port);
 
-        if !no_docker {
+        if !opts.no_docker {
             docker::enrich_with_docker(&mut entries);
         }
 
@@ -158,7 +182,7 @@ pub fn run_watch(
         let header_line = format!(
             "onport watch \u{2014} press q to quit  (last updated: {now})"
         );
-        if no_color {
+        if opts.no_color {
             println!("{header_line}");
         } else {
             println!("{}", header_line.bold());
@@ -166,7 +190,7 @@ pub fn run_watch(
         println!();
 
         // Column header
-        print_column_header(no_color);
+        print_column_header(opts.no_color);
 
         // Current entries
         for entry in &display_entries {
@@ -176,7 +200,7 @@ pub fn run_watch(
             } else {
                 RowHighlight::Normal
             };
-            print_row(entry, highlight, no_color);
+            print_row(entry, highlight, opts.no_color);
         }
 
         // Gone entries (shown for one cycle in red)
@@ -187,10 +211,10 @@ pub fn run_watch(
         for (port, addr) in gone_sorted {
             let addr_str = super::format_address(&addr);
             let row = format!(
-                "  {:>5}  {:<4}  {:<16}  {:<16}  {:>6}  {:<10}  {}",
+                "  {:>5}  {:<4}  {:<16}  {:<16}  {:>6}  {:<10}  {}", // PROCESS_COL_WIDTH chars
                 port, "—", addr_str, "—", "—", "—", "GONE"
             );
-            if no_color {
+            if opts.no_color {
                 println!("{row}");
             } else {
                 println!("{}", row.red());
@@ -236,7 +260,7 @@ enum RowHighlight {
 /// Print the column header line followed by a separator.
 fn print_column_header(no_color: bool) {
     let header = format!(
-        "  {:<5}  {:<4}  {:<16}  {:<16}  {:<6}  {:<10}  {}",
+        "  {:<5}  {:<4}  {:<16}  {:<16}  {:<6}  {:<10}  {}", // PROCESS_COL_WIDTH chars
         "PORT", "PROTO", "ADDRESS", "PROCESS", "PID", "USER", "STATE"
     );
     let sep =
@@ -261,10 +285,10 @@ fn print_column_header(no_color: bool) {
 /// Print a single port-entry row, applying highlight color when appropriate.
 fn print_row(entry: &crate::types::PortEntry, highlight: RowHighlight, no_color: bool) {
     let process_name = entry.process_name.as_deref().unwrap_or("?");
-    let process_display = if process_name.chars().count() > 16 {
+    let process_display = if process_name.chars().count() > super::PROCESS_COL_WIDTH {
         let truncate_at = process_name
             .char_indices()
-            .nth(15)
+            .nth(super::PROCESS_COL_WIDTH - 1)
             .map(|(i, _)| i)
             .unwrap_or(process_name.len());
         format!("{}\u{2026}", &process_name[..truncate_at])
@@ -286,7 +310,7 @@ fn print_row(entry: &crate::types::PortEntry, highlight: RowHighlight, no_color:
         .unwrap_or_default();
 
     let row = format!(
-        "  {:>5}  {:<4}  {:<16}  {:<16}  {:>6}  {:<10}  {}{}",
+        "  {:>5}  {:<4}  {:<16}  {:<16}  {:>6}  {:<10}  {}{}", // PROCESS_COL_WIDTH chars
         entry.port,
         entry.protocol,
         addr_str,

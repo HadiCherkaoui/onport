@@ -9,6 +9,9 @@ use std::net::IpAddr;
 
 use crate::types::PortEntry;
 
+/// Maximum character width for the PROCESS column before truncation.
+pub(crate) const PROCESS_COL_WIDTH: usize = 16;
+
 /// Supported output formats.
 pub enum OutputFormat {
     /// Pretty colored table for terminal display.
@@ -17,14 +20,20 @@ pub enum OutputFormat {
     Json,
 }
 
+/// Options controlling how port entries are rendered.
+pub struct RenderOptions {
+    /// Disable ANSI color codes in output.
+    pub no_color: bool,
+}
+
 /// Render port entries in the specified format.
 ///
 /// # Errors
 ///
 /// Returns an error if writing to stdout fails.
-pub fn render(entries: &[PortEntry], format: &OutputFormat, no_color: bool) -> Result<()> {
+pub fn render(entries: &[PortEntry], format: &OutputFormat, options: &RenderOptions) -> Result<()> {
     match format {
-        OutputFormat::Table => table::render(entries, no_color),
+        OutputFormat::Table => table::render(entries, options),
         OutputFormat::Json => json::render(entries),
     }
 }
@@ -33,7 +42,7 @@ pub fn render(entries: &[PortEntry], format: &OutputFormat, no_color: bool) -> R
 ///
 /// Displays command line, start time, and open FD count in key-value format.
 /// Fields that are `None` are omitted entirely.
-pub fn render_details(details: &crate::types::ProcessDetails, _no_color: bool) {
+pub fn render_details(details: &crate::types::ProcessDetails) {
     if let Some(cmdline) = &details.cmdline {
         println!("  Command:    {cmdline}");
     }

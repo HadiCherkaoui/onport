@@ -61,6 +61,14 @@ struct Cli {
     #[arg(long = "force", short = 'f')]
     force: bool,
 
+    /// Filter by process name (case-insensitive substring match).
+    #[arg(short = 'n', long = "name")]
+    name: Option<String>,
+
+    /// Filter by PID.
+    #[arg(long = "pid")]
+    pid: Option<u32>,
+
     /// Live-updating watch mode (refresh every 2s).
     #[arg(short = 'w', long = "watch", conflicts_with_all = ["kill", "json"])]
     watch: bool,
@@ -88,14 +96,16 @@ fn main() -> Result<()> {
         } else {
             None
         };
-        return output::watch::run_watch(
-            provider.as_ref(),
-            &port_filters,
+        let opts = output::watch::WatchOptions {
+            port_filters: &port_filters,
             protocol_filter,
-            cli.all,
-            cli.no_color,
-            cli.no_docker,
-        );
+            show_all_states: cli.all,
+            no_color: cli.no_color,
+            no_docker: cli.no_docker,
+            name_filter: cli.name.as_deref(),
+            pid_filter: cli.pid,
+        };
+        return output::watch::run_watch(provider.as_ref(), &opts);
     }
 
     let mut entries = provider
@@ -119,6 +129,21 @@ fn main() -> Result<()> {
         entries.retain(|e| e.state == types::SocketState::Listen);
     }
 
+    // Filter by process name (case-insensitive substring)
+    if let Some(ref name_filter) = cli.name {
+        let lower = name_filter.to_lowercase();
+        entries.retain(|e| {
+            e.process_name
+                .as_deref()
+                .is_some_and(|n| n.to_lowercase().contains(&lower))
+        });
+    }
+
+    // Filter by PID
+    if let Some(pid_filter) = cli.pid {
+        entries.retain(|e| e.pid == Some(pid_filter));
+    }
+
     // Deduplicate wildcard IPv4/IPv6 entries that represent the same socket
     dedup_entries(&mut entries);
 
@@ -140,7 +165,7 @@ fn main() -> Result<()> {
         // spawning separate IPv4/IPv6 listeners). Reject only when genuinely different
         // processes would be affected.
         if !is_single_process(&entries) {
-            output::render(&entries, &OutputFormat::Table, cli.no_color)?;
+            output::render(&entries, &OutputFormat::Table, &output::RenderOptions { no_color: cli.no_color })?;
             eprintln!("Multiple different processes found. Specify a single port.");
             return Ok(());
         }
@@ -159,7 +184,7 @@ fn main() -> Result<()> {
     let mut display_entries = entries.clone();
     dedup_same_service(&mut display_entries);
 
-    output::render(&display_entries, &format, cli.no_color)?;
+    output::render(&display_entries, &format, &output::RenderOptions { no_color: cli.no_color })?;
 
     // Enhanced single-port view: show process details and offer an inline kill prompt
     // when exactly one port is queried, a single process matched, and we are in a TTY.
@@ -177,7 +202,7 @@ fn main() -> Result<()> {
 
         if unique_pids.len() == 1 {
             let details = process_detail::resolve(unique_pids[0]);
-            output::render_details(&details, cli.no_color);
+            output::render_details(&details);
 
             println!();
             print!("  Kill this process? [y/N] ");
@@ -511,5 +536,76 @@ mod tests {
             make_entry(80, "apache2"),
         ];
         assert!(!is_single_process(&entries));
+    }
+
+    // ── Name / PID filter tests ───────────────────────────────────────────────
+
+    fn make_test_entry(port: u16, name: &str, pid: u32) -> crate::types::PortEntry {
+        use std::net::{IpAddr, Ipv4Addr};
+        use crate::types::{PortEntry, Protocol, SocketState};
+        PortEntry {
+            port,
+            protocol: Protocol::Tcp,
+            state: SocketState::Listen,
+            pid: Some(pid),
+            process_name: Some(name.to_string()),
+            user: None,
+            local_addr: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+            remote_addr: None,
+            docker_container: None,
+        }
+    }
+
+    #[test]
+    fn test_name_filter_case_insensitive() {
+        let mut entries = vec![
+            make_test_entry(80, "nginx", 100),
+            make_test_entry(5432, "Postgres", 200),
+        ];
+        let lower = "NGI".to_lowercase();
+        entries.retain(|e| {
+            e.process_name
+                .as_deref()
+                .is_some_and(|n| n.to_lowercase().contains(&lower))
+        });
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].process_name.as_deref(), Some("nginx"));
+    }
+
+    #[test]
+    fn test_name_filter_no_match() {
+        let mut entries = vec![
+            make_test_entry(80, "nginx", 100),
+            make_test_entry(5432, "Postgres", 200),
+        ];
+        let lower = "nonexistent".to_lowercase();
+        entries.retain(|e| {
+            e.process_name
+                .as_deref()
+                .is_some_and(|n| n.to_lowercase().contains(&lower))
+        });
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn test_pid_filter_match() {
+        let mut entries = vec![
+            make_test_entry(80, "nginx", 1234),
+            make_test_entry(5432, "postgres", 5678),
+        ];
+        let pid_filter: u32 = 1234;
+        entries.retain(|e| e.pid == Some(pid_filter));
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].pid, Some(1234));
+    }
+
+    #[test]
+    fn test_pid_filter_no_match() {
+        let mut entries = vec![
+            make_test_entry(80, "nginx", 1234),
+        ];
+        let pid_filter: u32 = 9999;
+        entries.retain(|e| e.pid == Some(pid_filter));
+        assert!(entries.is_empty());
     }
 }
