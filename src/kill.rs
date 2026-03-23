@@ -50,12 +50,13 @@ pub fn is_safe_to_kill(entry: &PortEntry) -> Result<()> {
 ///
 /// When `force` is false, a confirmation prompt is shown before sending SIGTERM.
 /// When `force` is true, SIGKILL is sent immediately without prompting.
+/// When `signal` is provided it overrides the default TERM/KILL choice on Unix.
 ///
 /// # Errors
 ///
 /// Returns an error if safety checks fail, the user cannot be prompted, or any
 /// kill signal fails.
-pub fn kill_processes(entries: &[PortEntry], force: bool) -> Result<()> {
+pub fn kill_processes(entries: &[PortEntry], force: bool, signal: Option<&str>) -> Result<()> {
     let (pids, pid_map) = collect_pids(entries)?;
 
     if !force {
@@ -89,7 +90,7 @@ pub fn kill_processes(entries: &[PortEntry], force: bool) -> Result<()> {
     // Safety-check and kill. When force=true the safety check has already run
     // via collect_pids; we just need to send the signal.
     let _ = &pid_map; // keep alive for safety checks already done inside collect_pids
-    dispatch_signals(&pids, force)?;
+    dispatch_signals(&pids, force, signal)?;
     poll_for_exit(&pids, force);
     Ok(())
 }
@@ -97,14 +98,15 @@ pub fn kill_processes(entries: &[PortEntry], force: bool) -> Result<()> {
 /// Kill all processes represented by `entries` without asking for confirmation.
 ///
 /// Safety checks are still performed. Sends SIGTERM (graceful) to each unique
-/// PID. Use this when the caller has already obtained confirmation from the user.
+/// PID unless `signal` overrides the choice. Use this when the caller has
+/// already obtained confirmation from the user.
 ///
 /// # Errors
 ///
 /// Returns an error if safety checks fail or any kill signal fails.
-pub fn kill_confirmed(entries: &[PortEntry]) -> Result<()> {
+pub fn kill_confirmed(entries: &[PortEntry], signal: Option<&str>) -> Result<()> {
     let (pids, _pid_map) = collect_pids(entries)?;
-    dispatch_signals(&pids, false)?;
+    dispatch_signals(&pids, false, signal)?;
     poll_for_exit(&pids, false);
     Ok(())
 }
@@ -136,9 +138,9 @@ fn collect_pids(entries: &[PortEntry]) -> Result<(Vec<u32>, HashMap<u32, ()>)> {
 }
 
 /// Send kill signals to each PID in `pids`.
-fn dispatch_signals(pids: &[u32], force: bool) -> Result<()> {
+fn dispatch_signals(pids: &[u32], force: bool, signal: Option<&str>) -> Result<()> {
     for &pid in pids {
-        send_signal_to_pid(pid, force)?;
+        send_signal_to_pid(pid, force, signal)?;
     }
     Ok(())
 }
@@ -164,12 +166,31 @@ fn poll_for_exit(pids: &[u32], force: bool) {
     let _ = (pids, force);
 }
 
+/// Normalize a signal specifier to the form expected by the `kill` command.
+///
+/// - Already starts with `-`: returned as-is.
+/// - Pure numeric string (e.g. `"9"`): prefixed with `-`.
+/// - Signal name (with or without `SIG` prefix): stripped of `SIG`, prefixed with `-`.
+#[cfg(any(unix, test))]
+fn normalize_signal(sig: &str) -> String {
+    if sig.starts_with('-') {
+        sig.to_string()
+    } else if sig.parse::<u32>().is_ok() {
+        format!("-{sig}")
+    } else {
+        format!("-{}", sig.strip_prefix("SIG").unwrap_or(sig))
+    }
+}
+
 /// Send the platform-specific kill signal to `pid`.
 #[cfg(unix)]
-fn send_signal_to_pid(pid: u32, force: bool) -> Result<()> {
-    let signal = if force { "-KILL" } else { "-TERM" };
+fn send_signal_to_pid(pid: u32, force: bool, signal: Option<&str>) -> Result<()> {
+    let sig_arg = match signal {
+        Some(s) => normalize_signal(s),
+        None => if force { "-KILL".to_string() } else { "-TERM".to_string() },
+    };
     let status = std::process::Command::new("kill")
-        .arg(signal)
+        .arg(&sig_arg)
         .arg(pid.to_string())
         .status()
         .map_err(|e| anyhow!("Failed to run kill command: {e}"))?;
@@ -185,7 +206,10 @@ fn send_signal_to_pid(pid: u32, force: bool) -> Result<()> {
 
 /// Send the platform-specific kill signal to `pid`.
 #[cfg(windows)]
-fn send_signal_to_pid(pid: u32, force: bool) -> Result<()> {
+fn send_signal_to_pid(pid: u32, force: bool, signal: Option<&str>) -> Result<()> {
+    // Custom signals are not supported on Windows; ignore the signal parameter
+    // and fall back to the existing taskkill behavior.
+    let _ = signal;
     let mut cmd = std::process::Command::new("taskkill");
     cmd.args(["/PID", &pid.to_string()]);
     if force {
@@ -205,7 +229,7 @@ fn send_signal_to_pid(pid: u32, force: bool) -> Result<()> {
 
 /// Send the platform-specific kill signal to `pid`.
 #[cfg(not(any(unix, windows)))]
-fn send_signal_to_pid(_pid: u32, _force: bool) -> Result<()> {
+fn send_signal_to_pid(_pid: u32, _force: bool, _signal: Option<&str>) -> Result<()> {
     Err(anyhow!("Kill is not supported on this platform"))
 }
 
@@ -279,14 +303,14 @@ mod tests {
     #[test]
     fn test_kill_processes_no_pid_returns_err() {
         let entries = vec![fake_entry(None)];
-        let result = kill_processes(&entries, true);
+        let result = kill_processes(&entries, true, None);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_kill_confirmed_no_pid_returns_err() {
         let entries = vec![fake_entry(None)];
-        assert!(kill_confirmed(&entries).is_err());
+        assert!(kill_confirmed(&entries, None).is_err());
     }
 
     #[test]
@@ -322,5 +346,25 @@ mod tests {
             }
         }
         assert_eq!(pid_set.len(), 2, "two distinct PIDs should both be present");
+    }
+
+    #[test]
+    fn test_normalize_signal_sigterm() {
+        assert_eq!(normalize_signal("SIGTERM"), "-TERM");
+    }
+
+    #[test]
+    fn test_normalize_signal_numeric() {
+        assert_eq!(normalize_signal("9"), "-9");
+    }
+
+    #[test]
+    fn test_normalize_signal_short_name() {
+        assert_eq!(normalize_signal("HUP"), "-HUP");
+    }
+
+    #[test]
+    fn test_normalize_signal_already_dashed() {
+        assert_eq!(normalize_signal("-KILL"), "-KILL");
     }
 }

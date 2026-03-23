@@ -203,3 +203,26 @@ fn wide_flag_table_exits_zero() {
         .expect("failed to run onport");
     assert!(output.status.success());
 }
+
+#[test]
+fn signal_without_kill_exits_error() {
+    let output = onport()
+        .args(["--signal", "HUP", "8080"])
+        .output()
+        .expect("failed to run onport");
+    // Should exit successfully (we print to stderr and return Ok) or non-zero
+    // The important thing is stderr contains "requires --kill"
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("requires --kill"),
+        "expected 'requires --kill' in stderr, got: {stderr}"
+    );
+}
+
+#[test]
+fn help_mentions_signal() {
+    let output = onport().arg("--help").output().expect("failed to run onport");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("--signal"), "help should mention --signal");
+}

@@ -80,6 +80,10 @@ struct Cli {
     #[arg(long = "force", short = 'f')]
     force: bool,
 
+    /// Signal to send when killing (e.g. HUP, TERM, KILL, 9). Only effective with --kill.
+    #[arg(long = "signal")]
+    signal: Option<String>,
+
     /// Filter by process name (case-insensitive substring match).
     #[arg(short = 'n', long = "name")]
     name: Option<String>,
@@ -117,6 +121,12 @@ fn main() -> Result<()> {
     // Kill mode requires a specific port to avoid ambiguity.
     if cli.kill && port_filters.is_empty() {
         eprintln!("Error: --kill requires a port number (e.g., onport --kill 3000).");
+        return Ok(());
+    }
+
+    // --signal requires --kill
+    if cli.signal.is_some() && !cli.kill {
+        eprintln!("Error: --signal requires --kill.");
         return Ok(());
     }
 
@@ -215,7 +225,7 @@ fn main() -> Result<()> {
             eprintln!("Multiple different processes found. Specify a single port.");
             return Ok(());
         }
-        kill::kill_processes(&entries, cli.force)?;
+        kill::kill_processes(&entries, cli.force, cli.signal.as_deref())?;
         return Ok(());
     }
 
@@ -258,7 +268,7 @@ fn main() -> Result<()> {
             if line.starts_with('y') || line.starts_with('Y') {
                 // User already confirmed via the inline prompt; skip the second
                 // confirmation that kill_processes would show.
-                kill::kill_confirmed(&entries)?;
+                kill::kill_confirmed(&entries, None)?;
             }
         }
     }
