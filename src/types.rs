@@ -17,6 +17,8 @@ pub struct ProcessDetails {
     pub start_time: Option<String>,
     /// Number of open file descriptors or handles.
     pub fd_count: Option<usize>,
+    /// Process ancestry chain (e.g. `"systemd → docker → postgres"`).
+    pub process_tree: Option<String>,
 }
 
 /// Represents a single network socket entry.

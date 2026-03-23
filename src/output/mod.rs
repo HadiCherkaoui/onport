@@ -43,6 +43,9 @@ pub fn render_details(details: &crate::types::ProcessDetails, _no_color: bool) {
     if let Some(fd_count) = details.fd_count {
         println!("  Open FDs:   {fd_count}");
     }
+    if let Some(tree) = &details.process_tree {
+        println!("  Tree:       {tree}");
+    }
 }
 
 /// Format a local bind address for display.

@@ -26,7 +26,7 @@ static GLOBAL: MiMalloc = MiMalloc;
 #[derive(Parser)]
 #[command(name = "onport", version, about)]
 struct Cli {
-    /// Port numbers to filter (e.g., 3000 8080 or :3000 :8080).
+    /// Port numbers or ranges to filter (e.g., 3000 8080 3000-3002 :3000).
     ports: Vec<String>,
 
     /// Show only TCP sockets.
@@ -154,7 +154,12 @@ fn main() -> Result<()> {
         OutputFormat::Table
     };
 
-    output::render(&entries, &format, cli.no_color)?;
+    // Build a deduplicated copy for display. The original `entries` is kept
+    // intact so the enhanced single-port view and kill path see all PIDs.
+    let mut display_entries = entries.clone();
+    dedup_same_service(&mut display_entries);
+
+    output::render(&display_entries, &format, cli.no_color)?;
 
     // Enhanced single-port view: show process details and offer an inline kill prompt
     // when exactly one port is queried, a single process matched, and we are in a TTY.
@@ -227,20 +232,65 @@ pub(crate) fn dedup_entries(entries: &mut Vec<types::PortEntry>) {
     });
 }
 
-/// Parse port filter arguments, stripping optional `:` prefix.
+/// Collapse entries that represent the same logical service for display purposes.
+///
+/// docker-proxy spawns separate IPv4 and IPv6 listener processes for the same
+/// port, producing two rows that are visually identical from the user's
+/// perspective. This function collapses entries sharing the same
+/// `(port, protocol, state, process_name)` tuple down to a single row.
+///
+/// **Display only** — this is called on a clone of entries. The original slice
+/// is unchanged so that the kill path and enhanced detail view can still
+/// operate on all PIDs.
+pub(crate) fn dedup_same_service(entries: &mut Vec<types::PortEntry>) {
+    use std::collections::HashSet;
+
+    // Key: (port, protocol, state, process_name)
+    let mut seen: HashSet<(u16, String, String, String)> = HashSet::new();
+    entries.retain(|e| {
+        let key = (
+            e.port,
+            e.protocol.to_string(),
+            e.state.to_string(),
+            e.process_name.as_deref().unwrap_or("?").to_string(),
+        );
+        seen.insert(key)
+    });
+}
+
+/// Parse port filter arguments, supporting single ports and `N-M` ranges.
+///
+/// Each argument may optionally be prefixed with `:` (e.g. `:3000` or `:3000-3002`).
+/// A `-` separator expands the argument into the inclusive range `start..=end`.
+/// Mixed arguments work: `["80", "3000-3002"]` produces `[80, 3000, 3001, 3002]`.
 ///
 /// # Errors
 ///
-/// Returns an error if a port argument is not a valid u16 number.
+/// Returns an error if any port value is not a valid `u16`, or if the start of a
+/// range is greater than its end (reversed range).
 fn parse_port_filters(args: &[String]) -> Result<Vec<u16>> {
-    args.iter()
-        .map(|arg| {
-            let cleaned = arg.strip_prefix(':').unwrap_or(arg);
-            cleaned
+    let mut ports = Vec::new();
+    for arg in args {
+        let cleaned = arg.strip_prefix(':').unwrap_or(arg);
+        if let Some((start_str, end_str)) = cleaned.split_once('-') {
+            let start = start_str
                 .parse::<u16>()
-                .with_context(|| format!("Invalid port number: {arg}"))
-        })
-        .collect()
+                .with_context(|| format!("Invalid port number in range: {arg}"))?;
+            let end = end_str
+                .parse::<u16>()
+                .with_context(|| format!("Invalid port number in range: {arg}"))?;
+            if start > end {
+                anyhow::bail!("Invalid port range (start > end): {arg}");
+            }
+            ports.extend(start..=end);
+        } else {
+            let port = cleaned
+                .parse::<u16>()
+                .with_context(|| format!("Invalid port number: {arg}"))?;
+            ports.push(port);
+        }
+    }
+    Ok(ports)
 }
 
 #[cfg(test)]
@@ -316,6 +366,40 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_port_filters_range() {
+        let args = vec!["3000-3002".to_string()];
+        let result = parse_port_filters(&args).unwrap();
+        assert_eq!(result, vec![3000, 3001, 3002]);
+    }
+
+    #[test]
+    fn test_parse_port_filters_range_with_colon() {
+        let args = vec![":8080-8082".to_string()];
+        let result = parse_port_filters(&args).unwrap();
+        assert_eq!(result, vec![8080, 8081, 8082]);
+    }
+
+    #[test]
+    fn test_parse_port_filters_single_port_range() {
+        let args = vec!["9000-9000".to_string()];
+        let result = parse_port_filters(&args).unwrap();
+        assert_eq!(result, vec![9000]);
+    }
+
+    #[test]
+    fn test_parse_port_filters_reversed_range_errors() {
+        let args = vec!["9000-8000".to_string()];
+        assert!(parse_port_filters(&args).is_err());
+    }
+
+    #[test]
+    fn test_parse_port_filters_mixed_range_and_single() {
+        let args = vec!["80".to_string(), "3000-3002".to_string()];
+        let result = parse_port_filters(&args).unwrap();
+        assert_eq!(result, vec![80, 3000, 3001, 3002]);
+    }
+
+    #[test]
     fn test_is_single_process_same_name() {
         use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
         use crate::types::{PortEntry, Protocol, SocketState};
@@ -340,6 +424,66 @@ mod tests {
             make_entry(IpAddr::V6(Ipv6Addr::UNSPECIFIED), "docker-proxy"),
         ];
         assert!(is_single_process(&entries));
+    }
+
+    #[test]
+    fn test_dedup_same_service_collapses_docker_proxy() {
+        use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+        use crate::types::{PortEntry, Protocol, SocketState};
+
+        fn make_proxy_entry(addr: IpAddr, pid: u32) -> PortEntry {
+            PortEntry {
+                port: 8888,
+                protocol: Protocol::Tcp,
+                state: SocketState::Listen,
+                pid: Some(pid),
+                process_name: Some("docker-proxy".to_string()),
+                user: None,
+                local_addr: addr,
+                remote_addr: None,
+                docker_container: None,
+            }
+        }
+
+        // Two docker-proxy entries (IPv4 + IPv6), different PIDs
+        let mut entries = vec![
+            make_proxy_entry(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 1001),
+            make_proxy_entry(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 1002),
+        ];
+
+        dedup_same_service(&mut entries);
+
+        assert_eq!(entries.len(), 1, "two docker-proxy entries should collapse to one for display");
+    }
+
+    #[test]
+    fn test_dedup_same_service_keeps_different_processes() {
+        use std::net::{IpAddr, Ipv4Addr};
+        use crate::types::{PortEntry, Protocol, SocketState};
+
+        fn make_entry(port: u16, name: &str) -> PortEntry {
+            PortEntry {
+                port,
+                protocol: Protocol::Tcp,
+                state: SocketState::Listen,
+                pid: Some(100),
+                process_name: Some(name.to_string()),
+                user: None,
+                local_addr: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                remote_addr: None,
+                docker_container: None,
+            }
+        }
+
+        // Two different services on different ports — must not be collapsed
+        let mut entries = vec![
+            make_entry(80, "nginx"),
+            make_entry(443, "nginx"),
+        ];
+
+        dedup_same_service(&mut entries);
+
+        assert_eq!(entries.len(), 2, "different ports must not be collapsed");
     }
 
     #[test]
