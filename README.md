@@ -5,7 +5,7 @@
 `onport` is a cross-platform CLI tool that instantly shows what processes are listening on which ports. One command replaces `lsof -i`, `ss -tlnp`, `netstat -an`, and `Get-NetTCPConnection`.
 
 > **Downloading?** Pre-built binaries are available on GitLab — see the
-> [latest release](https://gitlab.cherkaoui.ch/HadiCherkaoui/onport/-/releases/permalink/latest)
+> [latest release](https://gitlab.cherkaoui.ch/HadiCherkaoui/onport/-/releases)
 > for Linux, Windows, macOS, and FreeBSD downloads.
 
 ## Features
@@ -40,7 +40,7 @@ irm https://gitlab.cherkaoui.ch/HadiCherkaoui/onport/-/raw/main/install.ps1 | ie
 ```
 
 Or download a binary directly from the
-[latest release](https://gitlab.cherkaoui.ch/HadiCherkaoui/onport/-/releases/permalink/latest).
+[latest release](https://gitlab.cherkaoui.ch/HadiCherkaoui/onport/-/releases).
 
 ### From source
 
@@ -62,7 +62,7 @@ cargo build --release
 | Windows x86_64 | ✅ Tested | mingw cross-compile |
 | macOS x86_64 | ⚠️ Untested | cross-compiled via cargo-zigbuild |
 | macOS ARM64 | ⚠️ Untested | cross-compiled via cargo-zigbuild |
-| FreeBSD x86_64 | ⚠️ Untested | cross-compiled via cargo-zigbuild |
+| FreeBSD x86_64 | ⚠️ Build from source (`cargo build --release`) | zig sysroot missing libexecinfo |
 
 ## Usage
 

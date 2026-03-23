@@ -129,22 +129,10 @@ build:macos-aarch64:
   rules:
     - if: '$CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/'
 
-build:freebsd-x86_64:
-  extends: .zigbuild-setup
-  stage: build
-  script:
-    - rustup target add x86_64-unknown-freebsd
-    - cargo zigbuild --release --target x86_64-unknown-freebsd
-    - cp target/x86_64-unknown-freebsd/release/onport onport-freebsd-x86_64
-    - |
-      curl --header "JOB-TOKEN: $CI_JOB_TOKEN" \
-        --upload-file onport-freebsd-x86_64 \
-        "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/onport/$CI_COMMIT_TAG/onport-freebsd-x86_64"
-  artifacts:
-    paths:
-      - onport-freebsd-x86_64
-  rules:
-    - if: '$CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/'
+# FreeBSD cross-compilation via zig is not supported: Rust's stdlib for
+# FreeBSD requires libexecinfo and other system libraries that are absent
+# from zig's bundled FreeBSD sysroot. FreeBSD users should build from source:
+#   cargo build --release
 
 release:
   stage: release
@@ -160,9 +148,6 @@ release:
       artifacts: false
       optional: true
     - job: build:macos-aarch64
-      artifacts: false
-      optional: true
-    - job: build:freebsd-x86_64
       artifacts: false
       optional: true
   script:
@@ -204,9 +189,6 @@ release:
           link_type: package
         - name: "onport-macos-aarch64"
           url: "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/onport/$CI_COMMIT_TAG/onport-macos-aarch64"
-          link_type: package
-        - name: "onport-freebsd-x86_64"
-          url: "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/onport/$CI_COMMIT_TAG/onport-freebsd-x86_64"
           link_type: package
   rules:
     - if: '$CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/'
