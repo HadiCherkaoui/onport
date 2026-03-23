@@ -163,14 +163,12 @@ release:
       ### Quick Install
 
       **Linux/macOS:**
-      ```sh
-      curl -sSfL https://gitlab.cherkaoui.ch/HadiCherkaoui/onport/-/raw/main/install.sh | bash
-      ```
+
+          curl -sSfL https://gitlab.cherkaoui.ch/HadiCherkaoui/onport/-/raw/main/install.sh | bash
 
       **Windows (PowerShell):**
-      ```powershell
-      irm https://gitlab.cherkaoui.ch/HadiCherkaoui/onport/-/raw/main/install.ps1 | iex
-      ```
+
+          irm https://gitlab.cherkaoui.ch/HadiCherkaoui/onport/-/raw/main/install.ps1 | iex
 
       ### Downloads
     assets:
