@@ -15,6 +15,8 @@ use super::RenderOptions;
 struct TableRow {
     #[tabled(rename = "PORT")]
     port: String,
+    #[tabled(rename = "SERVICE")]
+    service: String,
     #[tabled(rename = "PROTO")]
     proto: String,
     #[tabled(rename = "ADDRESS")]
@@ -72,6 +74,7 @@ pub fn render(entries: &[PortEntry], options: &RenderOptions) -> Result<()> {
 
             TableRow {
                 port: e.port.to_string(),
+                service: crate::services::lookup(e.port).unwrap_or("—").to_string(),
                 proto: e.protocol.to_string(),
                 address: super::format_address(&e.local_addr),
                 process: process_display,

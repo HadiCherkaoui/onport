@@ -5,6 +5,7 @@ mod kill;
 mod output;
 mod platform;
 mod process_detail;
+mod services;
 mod types;
 
 use std::io::{IsTerminal, Write as _};

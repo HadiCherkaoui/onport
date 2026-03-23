@@ -239,8 +239,9 @@ pub fn run_watch(provider: &dyn PlatformProvider, opts: &WatchOptions<'_>) -> Re
         for (port, addr) in gone_sorted {
             let addr_str = super::format_address(&addr);
             let row = format!(
-                "  {:>5}  {:<4}  {:<16}  {:<name_width$}  {:>6}  {:<10}  {}",
-                port, "—", addr_str, "—", "—", "—", "GONE", name_width = name_width
+                "  {:>5}  {:<12}  {:<4}  {:<16}  {:<name_width$}  {:>6}  {:<10}  {}",
+                port, "—", "—", addr_str, "—", "—", "—", "GONE",
+                name_width = name_width,
             );
             if opts.no_color {
                 println!("{row}");
@@ -290,21 +291,22 @@ enum RowHighlight {
 /// `name_width` controls the width of the PROCESS column; in normal mode this
 /// equals `PROCESS_COL_WIDTH` (16); in wide mode it expands to the longest name.
 fn print_column_header(no_color: bool, name_width: usize) {
-    let process_col = format!("{:<name_width$}", "PROCESS", name_width = name_width);
     let header = format!(
-        "  {:<5}  {:<4}  {:<16}  {}  {:<6}  {:<10}  {}",
-        "PORT", "PROTO", "ADDRESS", process_col, "PID", "USER", "STATE"
+        "  {:>5}  {:<12}  {:<4}  {:<16}  {:<name_width$}  {:>6}  {:<10}  {}",
+        "PORT", "SERVICE", "PROTO", "ADDRESS", "PROCESS", "PID", "USER", "STATE",
+        name_width = name_width
     );
     // Build the separator with the correct number of dashes for each column.
     let sep = format!(
-        "  {dashes5}  {dashes4}  {addr}  {proc}  {pid}  {user}  {state}",
-        dashes5 = "\u{2500}".repeat(5),
-        dashes4 = "\u{2500}".repeat(4),
-        addr    = "\u{2500}".repeat(16),
-        proc    = "\u{2500}".repeat(name_width),
-        pid     = "\u{2500}".repeat(6),
-        user    = "\u{2500}".repeat(10),
-        state   = "\u{2500}".repeat(5),
+        "  {dashes5}  {service}  {dashes4}  {addr}  {proc}  {pid}  {user}  {state}",
+        dashes5  = "\u{2500}".repeat(5),
+        service  = "\u{2500}".repeat(12),
+        dashes4  = "\u{2500}".repeat(4),
+        addr     = "\u{2500}".repeat(16),
+        proc     = "\u{2500}".repeat(name_width),
+        pid      = "\u{2500}".repeat(6),
+        user     = "\u{2500}".repeat(10),
+        state    = "\u{2500}".repeat(5),
     );
 
     if no_color {
@@ -353,17 +355,19 @@ fn print_row(
         .map(|name| format!("  [docker: {name}]"))
         .unwrap_or_default();
 
-    let process_col = format!("{:<name_width$}", process_display, name_width = name_width);
+    let service_str = crate::services::lookup(entry.port).unwrap_or("—");
     let row = format!(
-        "  {:>5}  {:<4}  {:<16}  {}  {:>6}  {:<10}  {}{}",
+        "  {:>5}  {:<12}  {:<4}  {:<16}  {:<name_width$}  {:>6}  {:<10}  {}{}",
         entry.port,
+        service_str,
         entry.protocol,
         addr_str,
-        process_col,
+        process_display,
         pid_str,
         user_str,
         state_str,
         docker_suffix,
+        name_width = name_width,
     );
 
     if no_color {
