@@ -13,6 +13,7 @@ stages:
   - test
   - build
   - release
+  - publish
 
 test:
   stage: test
@@ -188,5 +189,15 @@ release:
         - name: "onport-macos-aarch64"
           url: "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/onport/$CI_COMMIT_TAG/onport-macos-aarch64"
           link_type: package
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/'
+
+publish:crates-io:
+  stage: publish
+  image: rust:latest
+  needs:
+    - job: release
+  script:
+    - cargo publish --token "$CARGO_REGISTRY_TOKEN"
   rules:
     - if: '$CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/'

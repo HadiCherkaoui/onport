@@ -44,12 +44,16 @@ irm https://gitlab.cherkaoui.ch/HadiCherkaoui/onport/-/raw/main/install.ps1 | ie
 Or download a binary directly from the
 [latest release](https://gitlab.cherkaoui.ch/HadiCherkaoui/onport/-/releases).
 
-### From source
+### cargo (crates.io)
 
 ```bash
 cargo install onport
+```
 
-# or clone and build
+### From source
+
+```bash
+# clone and build
 git clone https://gitlab.cherkaoui.ch/HadiCherkaoui/onport
 cd onport
 cargo build --release
